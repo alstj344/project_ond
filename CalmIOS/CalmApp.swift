@@ -30,7 +30,7 @@ private struct LaunchGate: View {
 
 private struct SplashView: View {
     var body: some View {
-        Image("Splash").resizable().scaledToFill()
+        Image("OnDBrand").resizable().scaledToFit().frame(width: 156, height: 98)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.background).ignoresSafeArea()
     }
@@ -42,6 +42,7 @@ enum Theme {
     static let mint = Color(red: 188 / 255, green: 238 / 255, blue: 211 / 255)
     static let accent = Color(red: 37 / 255, green: 83 / 255, blue: 63 / 255)
     static let ink = Color(red: 28 / 255, green: 28 / 255, blue: 24 / 255)
+    static let muted = Color(red: 177 / 255, green: 185 / 255, blue: 180 / 255)
 }
 
 enum AuthMode: String, Identifiable {
@@ -52,26 +53,37 @@ enum AuthMode: String, Identifiable {
 
 struct WelcomeView: View {
     @State private var authMode: AuthMode?
+    @State private var browsing = false
     @ScaledMetric(relativeTo: .body) private var buttonHeight = 52.0
 
     var body: some View {
         GeometryReader { geometry in
+            ScrollView {
             VStack(spacing: 0) {
                 Spacer()
-                Image("WelcomeIllustration").resizable().scaledToFit().frame(width: 210, height: 150)
-                VStack(spacing: 10) {
-                    Text("내 일상에 맞는\n운동을 찾아보세요.").font(AppTypography.font(22, weight: .bold)).multilineTextAlignment(.center)
+                Image("OnDBrand").resizable().scaledToFit().frame(width: 156, height: 98)
+                VStack(spacing: 8) {
+                    Text("내 일상에 맞는\n운동을 찾아보세요.").font(AppTypography.font(24, weight: .bold)).multilineTextAlignment(.center)
                     Text("나에게 맞는 운동 프로그램을 추천하고\n부담 없이 시작할 수 있도록 함께할게요.")
-                        .font(AppTypography.font(12)).foregroundStyle(Color.secondary).multilineTextAlignment(.center)
-                }.padding(.top, 18)
+                        .font(AppTypography.font(13)).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+                }.padding(.top, 48)
                 Spacer()
                 Button { authMode = .signup } label: {
-                    Text("시작하기").font(AppTypography.font(14, weight: .medium)).foregroundStyle(.white)
+                    Text("시작하기").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 56).background(Theme.accent, in: Capsule())
                 }.buttonStyle(.plain)
-                Button("천천히 둘러보기") { }.font(AppTypography.font(12)).foregroundStyle(Color.secondary).frame(minHeight: 48)
+                Button("천천히 둘러보기") { browsing = true }.font(AppTypography.font(13)).foregroundStyle(Color.secondary).frame(minHeight: 48)
             }.padding(.horizontal, 24).padding(.bottom, 16).frame(maxWidth: 402).frame(maxWidth: .infinity).frame(minHeight: geometry.size.height)
                 .background(Theme.background.ignoresSafeArea())
+            }.background(Theme.background.ignoresSafeArea())
+        }
+        .fullScreenCover(isPresented: $browsing) {
+            NavigationStack {
+                HomeView().safeAreaInset(edge: .top) {
+                    HStack { Button("둘러보기 종료") { browsing = false }; Spacer() }
+                        .padding(.horizontal, 24).padding(.vertical, 8).background(Theme.background)
+                }
+            }
         }
         .fullScreenCover(item: $authMode) { mode in
             if mode == .signup { SignupView() } else { AuthView(mode: mode) }
@@ -116,24 +128,39 @@ private struct SignupView: View {
     @State private var showAgreement = false
     @State private var showLogin = false
     var body: some View {
+        NavigationStack {
+        GeometryReader { geometry in
+        ScrollView {
         VStack(spacing: 0) {
-            HStack { Button { dismiss() } label: { Image(systemName: "arrow.left") }; Spacer() }.padding(.top, 18)
             VStack(alignment: .leading, spacing: 8) {
-                Text("나에게 맞는 운동,\nOnD에서 시작해볼까요?").font(AppTypography.font(22, weight: .bold))
-                Text("내게 맞는 운동을 찾고, 부담 없이 이어가보세요.").font(AppTypography.font(12)).foregroundStyle(Color.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 34)
-            Spacer()
-            Image("SignupIllustration").resizable().scaledToFit().frame(maxWidth: .infinity).frame(height: 260)
-            Spacer()
+                Text("나에게 맞는 운동,\nOnD에서 시작해볼까요?").font(AppTypography.font(24, weight: .bold))
+                Text("내게 맞는 운동을 찾고, 부담 없이 이어가보세요.").font(AppTypography.font(14)).foregroundStyle(Theme.muted)
+            }.fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 32)
+            Spacer(minLength: 32)
+            Image("SignupIllustration").resizable().scaledToFit().frame(maxWidth: 262).frame(height: 275)
+            Spacer(minLength: 32)
             Button { showAgreement = true } label: {
-                Text("회원가입").font(AppTypography.font(14, weight: .medium)).foregroundStyle(.white)
+                Text("회원가입").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: 56).background(Theme.accent, in: Capsule())
             }.buttonStyle(.plain)
             HStack(spacing: 4) { Text("이미 계정이 있나요?").foregroundStyle(Color.secondary); Button("로그인") { showLogin = true }.underline() }
-                .font(AppTypography.font(12)).frame(minHeight: 48)
-        }.padding(.horizontal, 24).background(Theme.background.ignoresSafeArea())
+                .font(AppTypography.font(13)).frame(minHeight: 48)
+        }.padding(.horizontal, 24).frame(maxWidth: 480)
+            .frame(minHeight: geometry.size.height).frame(maxWidth: .infinity)
+        }
+        }.background(Theme.background.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.background, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "arrow.left") }
+                        .accessibilityLabel("뒤로 가기")
+                }
+            }
             .fullScreenCover(isPresented: $showAgreement) { AgreementView() }
             .fullScreenCover(isPresented: $showLogin) { AuthView(mode: .login) }
+        }
     }
 }
 
@@ -144,51 +171,79 @@ struct AuthView: View {
     @State private var password = ""
     @State private var showResult = false
     @State private var revealPassword = false
+    @State private var showSignup = false
 
     private var validInput: Bool {
         let value = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = value.split(separator: "@", omittingEmptySubsequences: false)
-        return parts.count == 2 && !parts[0].isEmpty
-            && parts[1].contains(".") && !value.contains(where: \.isWhitespace)
+        return !value.isEmpty && !value.contains(where: \.isWhitespace)
             && password.count >= (mode == .signup ? 8 : 1)
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let top = geometry.safeAreaInsets.top
-            ZStack(alignment: .topLeading) {
-                Theme.background.ignoresSafeArea()
-                HStack {
-                    Button { dismiss() } label: { Image(systemName: "arrow.left").font(.system(size: 25, weight: .medium)) }
-                    Spacer()
-                    Text("로그인").font(AppTypography.font(14))
-                    Spacer()
-                    Color.clear.frame(width: 25)
-                }.foregroundStyle(Theme.accent).frame(width: geometry.size.width - 48)
-                    .position(x: geometry.size.width / 2, y: top - 55)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("오늘도 운동을 이어가볼까요?").font(AppTypography.font(22, weight: .bold))
-                    Text("로그인하고 나에게 맞는 운동을 이어가보세요.").font(AppTypography.font(12)).foregroundStyle(Color.secondary)
-                }.frame(width: geometry.size.width - 48, alignment: .leading)
-                    .position(x: geometry.size.width / 2, y: top + 40)
-                VStack(spacing: 12) {
-                    TextField("아이디 입력", text: $email).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .padding(.horizontal, 16).frame(height: 56).background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
-                    HStack {
-                        if revealPassword { TextField("비밀번호 입력", text: $password) } else { SecureField("비밀번호 입력", text: $password) }
-                        Button { revealPassword.toggle() } label: { Image(systemName: revealPassword ? "eye.slash" : "eye").foregroundStyle(Color.secondary) }
-                    }.padding(.horizontal, 16).frame(height: 56).background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
-                }.font(AppTypography.font(13)).frame(width: geometry.size.width - 48)
-                    .position(x: geometry.size.width / 2, y: top + 250)
-                Button("로그인") { password = ""; showResult = true }.font(AppTypography.font(14, weight: .medium)).foregroundStyle(.white)
-                    .frame(width: geometry.size.width - 48, height: 56).background(Theme.accent, in: Capsule())
-                    .disabled(!validInput).opacity(validInput ? 1 : 0.55)
-                    .position(x: geometry.size.width / 2, y: top + 403)
-                HStack(spacing: 4) { Text("아직 계정이 없나요?").foregroundStyle(Color.secondary); Button("회원가입") { dismiss() }.underline() }
-                    .font(AppTypography.font(12)).position(x: geometry.size.width / 2, y: top + 468)
-                Image("LoginIllustration").resizable().scaledToFit().frame(width: 58, height: 58)
-                    .position(x: geometry.size.width / 2, y: geometry.size.height - 64)
+        NavigationStack {
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("오늘도 운동을 이어가볼까요?")
+                                .font(AppTypography.font(24, weight: .bold, relativeTo: .title2))
+                            Text("로그인하고 나에게 맞는 운동을 이어가보세요.")
+                                .font(AppTypography.font(14)).foregroundStyle(Theme.muted)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4).padding(.top, 32)
+
+                        VStack(spacing: 12) {
+                            TextField("아이디 입력", text: $email)
+                                .textContentType(.username)
+                                .padding(.horizontal, 16).frame(minHeight: 56)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
+                            HStack(spacing: 0) {
+                                Group {
+                                    if revealPassword { TextField("비밀번호 입력", text: $password) }
+                                    else { SecureField("비밀번호 입력", text: $password) }
+                                }.textContentType(.password)
+                                Button { revealPassword.toggle() } label: {
+                                    SafeAssetImage(name: revealPassword ? "PasswordHidden" : "PasswordVisible", fallback: revealPassword ? "eye.slash" : "eye")
+                                        .frame(width: 18, height: 14).frame(width: 44, height: 44)
+                                }.accessibilityLabel(revealPassword ? "비밀번호 숨기기" : "비밀번호 표시")
+                            }.padding(.leading, 16).padding(.trailing, 2).frame(minHeight: 56)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
+                        }
+                        .font(AppTypography.font(14)).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .padding(.horizontal, 4).padding(.top, 128)
+
+                        Button { password = ""; showResult = true } label: {
+                            Text("로그인").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, minHeight: 56)
+                                .background(Theme.accent, in: Capsule())
+                        }.buttonStyle(.plain).disabled(!validInput).padding(.top, 32)
+                        HStack(spacing: 4) {
+                            Text("아직 계정이 없나요?").foregroundStyle(Theme.muted)
+                            Button("회원가입") { showSignup = true }.underline().frame(minHeight: 44)
+                        }.font(AppTypography.font(13))
+                        Spacer(minLength: 36)
+                        Image("LoginIllustration").resizable().scaledToFit()
+                            .frame(width: 64, height: 40).accessibilityHidden(true)
+                            .padding(.bottom, 24)
+                    }
+                    .padding(.horizontal, 24).frame(maxWidth: 480)
+                    .frame(minHeight: geometry.size.height).frame(maxWidth: .infinity)
+                }.scrollDismissesKeyboard(.interactively)
             }
+            .background(Theme.background.ignoresSafeArea())
+            .foregroundStyle(Theme.ink)
+            .navigationTitle("로그인").navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "arrow.left").font(.system(size: 16)) }
+                        .accessibilityLabel("뒤로 가기")
+                }
+            }
+            .fullScreenCover(isPresented: $showSignup) { AgreementView() }
             .alert("입력 형식 확인 완료", isPresented: $showResult) {
                 Button("확인", role: .cancel) {}
             } message: {

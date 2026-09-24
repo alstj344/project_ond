@@ -35,7 +35,7 @@ struct OnboardingView: View {
             }
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 32) {
                     content(step)
                 }
                 .padding(.horizontal, 24)
@@ -49,6 +49,11 @@ struct OnboardingView: View {
             .navigationTitle(step.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                ProgressView(value: Double((OnboardingStep.allCases.firstIndex(of: step) ?? 0) + 1), total: 9)
+                    .tint(Theme.accent).accessibilityLabel("정보 입력 진행 단계")
+            }
             .toolbar {
                 if step == .profile {
                     ToolbarItem(placement: .cancellationAction) {
@@ -62,11 +67,7 @@ struct OnboardingView: View {
     }
 
     private func topPadding(_ step: OnboardingStep) -> CGFloat {
-        switch step {
-        case .experience: return 160
-        case .format: return 100
-        default: return 32
-        }
+        32
     }
 
     @ViewBuilder
@@ -74,18 +75,18 @@ struct OnboardingView: View {
         switch step {
         case .profile: profileFields
         case .environment:
-            question("어느 정도까지 이동할 수 있나요?")
+            heading("운동하기\n편한 환경을 알려주세요", subtitle: "이동 거리와 가능한 시간을 알려주시면\n나에게 맞는 운동 환경을 찾아볼게요.")
             choices(OnboardingProfile.distanceOptions,
                     subtitles: ["집 앞 산책처럼 가볍게", "가벼운 발걸음으로 도달", "대중교통이나 자전거", "좋은 곳이라면 어디든 갈 수 있어요"],
                     selection: $profile.distance)
         case .experience:
-            question("평소 운동을 얼마나 해봤나요?")
+            heading("운동 경험을 알려주세요", subtitle: "현재 운동 습관을 바탕으로\n나에게 맞는 프로그램을 찾아볼게요.")
             choices(OnboardingProfile.experienceOptions, selection: $profile.experience)
         case .activities:
             question("어떤 운동을 해보고 싶나요?")
             activityGrid
         case .format:
-            question("어떤 방식으로 운동하는 게 편한가요?")
+            heading("운동 경험을 알려주세요", subtitle: "현재 운동 습관을 바탕으로\n나에게 맞는 프로그램을 찾아볼게요.")
             choices(OnboardingProfile.formatOptions,
                     subtitles: ["타인의 시선 없는 편안한 온실", "나만의 속도에 맞춘 밀착 케어", "서로의 침묵을 배려하는 아늑한 연대감"],
                     selection: $profile.format)
@@ -184,7 +185,7 @@ struct OnboardingView: View {
 
     private var medicalLinkContent: some View {
         VStack(alignment: .leading, spacing: 32) {
-            heading("운동 시작 전에\n확인할 사항이 있어요.", subtitle: "현재 의료기관에서 안내받은 운동 관련 정보가 있다면 나에게 맞는 프로그램을 추천하는 데 활용할 수 있어요.")
+            heading("운동 시작 전에\n확인할 사항이 있어요.", subtitle: "안전한 운동을 위해 의료기관에서 받은\n운동 관련 정보가 있는지 확인할게요.")
             VStack(spacing: 12) {
                 option("의료정보를 연결할래요.", subtitle: "의료기관에서 안내받은 정보를 추천에 반영해요.", selected: profile.linkMedical) {
                     profile.setMedicalLink(true)
@@ -241,7 +242,7 @@ struct OnboardingView: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: 24) {
-            heading("나에게 맞는\n운동 조건을 확인해볼까요?")
+            heading("나에게 맞는\n운동 조건을 확인해볼까요?", subtitle: "지금까지 입력한 정보를 바탕으로 운동 조건을 정리했어요.")
             VStack(spacing: 12) {
                 summaryTile("운동 종목", value: profile.activitySummary, note: "선호 조합")
                 LazyVGrid(columns: columns, spacing: 12) {
@@ -286,11 +287,11 @@ struct OnboardingView: View {
     }
 
     private func heading(_ title: String, subtitle: String = "") -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: headingSize, weight: .bold))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(AppTypography.font(24, weight: .bold, relativeTo: .title2))
                 .foregroundStyle(Theme.ink).fixedSize(horizontal: false, vertical: true)
             if !subtitle.isEmpty {
-                Text(subtitle).font(.subheadline).foregroundStyle(secondary)
+                Text(subtitle).font(AppTypography.font(14)).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -310,15 +311,16 @@ struct OnboardingView: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.subheadline.weight(selected ? .medium : .regular))
+                    Text(title).font(AppTypography.font(16, weight: .medium))
                     if !subtitle.isEmpty {
-                        Text(subtitle).font(.footnote).opacity(0.75)
+                        Text(subtitle).font(AppTypography.font(13)).opacity(0.75)
                     }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 24)).opacity(selected ? 1 : 0)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 24))
+                    .foregroundStyle(selected ? Theme.accent : Color(red: 235/255, green: 232/255, blue: 226/255))
                     .accessibilityHidden(true)
             }
             .padding(16)
@@ -574,20 +576,16 @@ private struct AnalysisView: View {
     var body: some View {
         VStack(spacing: 48) {
             Spacer()
-            ZStack {
-                Circle().fill(Theme.mint.opacity(0.5)).frame(width: 176, height: 176).blur(radius: 20)
-                Circle().fill(Theme.surface).frame(width: 96, height: 96)
-                Capsule().fill(Theme.mint.opacity(0.6)).frame(width: 64, height: 30)
-                Image("Leaf").resizable().scaledToFit().frame(width: 30, height: 30)
-            }
-            .frame(height: 96)
+            Image("AnalysisIllustration").resizable().scaledToFit()
+            .frame(width: 180, height: 180)
             .scaleEffect(breathing && !reduceMotion && !complete ? 1.06 : 1)
             .accessibilityHidden(true)
-            Text(complete ? "운동 조건 확인이 완료되었어요\n실제 프로그램 추천은 서비스 연결 후 제공됩니다" : "나의 운동 상태와 선호를 바탕으로\n안전하고 적합한 운동을 분석하고 있어요")
-                .font(.subheadline).lineSpacing(6).multilineTextAlignment(.center)
-                .padding(20).frame(maxWidth: .infinity)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
-                .accessibilityLabel(complete ? "데모 운동 조건 확인 완료" : "운동 조건 확인 중")
+            VStack(spacing: 8) {
+                Text(complete ? "운동 조건 확인이 완료되었어요" : "나에게 맞는 운동을 찾고 있어요")
+                    .font(AppTypography.font(20, weight: .bold))
+                Text(complete ? "실제 프로그램 추천은 서비스 연결 후 제공됩니다." : "운동 조건과 선호를 바탕으로\n편하게 참여할 수 있는 운동을 살펴보고 있어요.")
+                    .font(AppTypography.font(14)).foregroundStyle(Theme.muted)
+            }.multilineTextAlignment(.center)
             if complete {
                 Button("홈으로 이동") { onboardingCompleted = true }.buttonStyle(.borderedProminent)
                 Button("조건 다시 확인", action: onReview).buttonStyle(.plain)

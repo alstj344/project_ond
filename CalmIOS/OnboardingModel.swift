@@ -9,7 +9,8 @@ enum OnboardingStep: String, Hashable, CaseIterable {
         case .profile: return "개인정보 입력"
         case .environment: return "운동 환경"
         case .experience: return "운동 경험"
-        case .activities, .format: return "선호 운동"
+        case .activities: return "선호 운동"
+        case .format: return "운동 인원"
         case .medicalLink, .medicalQuestion, .medicalInfo: return "의료기관 연계"
         case .summary: return "추천 조건 확인"
         case .analysis: return ""
@@ -19,14 +20,14 @@ enum OnboardingStep: String, Hashable, CaseIterable {
     var figmaNode: String {
         switch self {
         case .profile: return "1:848"
-        case .environment: return "1:1578"
-        case .experience: return "1:1124"
+        case .environment: return "1:1579"
+        case .experience: return "1:1125"
         case .activities: return "1:1294"
         case .format: return "18:310"
-        case .medicalLink: return "1:1757"
+        case .medicalLink: return "1:1758"
         case .medicalQuestion: return "1:1866"
         case .medicalInfo: return "1:1988"
-        case .summary: return "1:2112"
+        case .summary: return "1:2113"
         case .analysis: return "18:18"
         }
     }

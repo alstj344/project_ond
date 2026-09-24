@@ -130,10 +130,11 @@ struct ProgramDetailView: View {
                     }
                     infoSection("운동정보") {
                         HStack(alignment: .top, spacing: 6) {
-                            metric("GymIcon", "운동종목", program.category)
-                            metric("DifficultyIcon", "난이도", "초보자")
-                            metric("GroupPeople", "참여 형태", program.smallGroup ? "소그룹" : "일반 참여")
-                            metric("DurationIcon", "운동 시간", program.isYoga ? "50분" : program.time)
+                            metric("ExerciseTypeLatest", "종목", program.category)
+                            Rectangle().fill(Theme.muted.opacity(0.3)).frame(width: 1, height: 36)
+                            metric("ExerciseDifficultyLatest", "난이도", "초보자")
+                            Rectangle().fill(Theme.muted.opacity(0.3)).frame(width: 1, height: 36)
+                            metric("ExerciseGroupLatest", "참여 형태", program.smallGroup ? "소모임" : "일반 참여")
                         }
                     }
                     infoSection("참여안내") {
@@ -192,20 +193,19 @@ struct ProgramDetailView: View {
     }
     private func metric(_ icon: String, _ title: String, _ value: String) -> some View {
         VStack(spacing: 6) {
-            if icon == "GroupPeople" {
-                Image(systemName: "person.3.fill").resizable().scaledToFit().frame(width: 28, height: 28)
-            } else {
-                SafeAssetImage(name: icon, fallback: "figure.mind.and.body").frame(width: 28, height: 28)
+            SafeAssetImage(name: icon, fallback: "figure.mind.and.body").frame(width: 35, height: 38)
+            Text(title).foregroundStyle(Color(red: 113/255, green: 121/255, blue: 115/255))
+            if !value.isEmpty {
+                Text(value).font(AppTypography.font(9)).padding(.horizontal, 10).padding(.vertical, 2)
+                    .background(Theme.mint.opacity(0.6), in: Capsule())
             }
-            Text(title)
-            if !value.isEmpty { Text(value) }
-        }.font(AppTypography.font(10, relativeTo: .caption)).foregroundStyle(Theme.accent).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+        }.font(AppTypography.font(11, relativeTo: .caption)).foregroundStyle(Theme.accent).multilineTextAlignment(.center).frame(maxWidth: .infinity)
     }
     private func infoSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title).font(AppTypography.font(14, weight: .semibold))
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(AppTypography.font(13, weight: .semibold))
             content().foregroundStyle(.secondary)
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Theme.background, in: RoundedRectangle(cornerRadius: 20))
     }
 }
 
@@ -364,7 +364,8 @@ struct CancelReservationView: View {
                 }
                 HStack {
                     FlowAction(title: "취소", secondary: true) { dismiss() }.frame(maxWidth: 110)
-                    FlowAction(title: "예약 취소") { if let reason { onConfirm(reason) } }.disabled(reason == nil).opacity(reason == nil ? 0.4 : 1)
+                    FlowAction(title: "확인") { if let reason { onConfirm(reason) } }.disabled(reason == nil).opacity(reason == nil ? 0.4 : 1)
+                        .accessibilityLabel("예약 취소 확정")
                 }.padding(.top, 16)
             }.font(AppTypography.font(14)).padding(24).padding(.top, 24)
         }.presentationDetents([.large]).presentationDragIndicator(.visible)
@@ -379,7 +380,7 @@ struct CancellationSuccessView: View {
             VStack(spacing: 28) {
                 SuccessIcon().padding(.top, 90).padding(.bottom, 40)
                 Text("예약이 취소되었습니다.").font(AppTypography.font(24, weight: .bold, relativeTo: .title2))
-                Text("예약한 프로그램은 목록에서 삭제되었어요.").foregroundStyle(.secondary)
+                Text("변경한 정보는 바로 반영되었어요.").foregroundStyle(.secondary)
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(booking.title).fontWeight(.semibold)

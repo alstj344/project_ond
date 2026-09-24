@@ -58,6 +58,12 @@ assert(query.results(DiscoveryProgram.samples).isEmpty)
 query.filter = .category
 query.category = "걷기"
 assert(query.results(DiscoveryProgram.samples).map(\.id) == ["discovery-walk"])
+query.filter = .group
+query.smallGroupOnly = true
+assert(query.results(DiscoveryProgram.samples).allSatisfy(\.smallGroup))
+assert(query.results(DiscoveryProgram.samples).count == DiscoveryProgram.samples.filter(\.smallGroup).count)
+query.smallGroupOnly = false
+assert(query.results(DiscoveryProgram.samples).count == DiscoveryProgram.samples.count)
 defaults.set(Data("[]".utf8), forKey: "calm.demoBookings.v1")
 assert(WellnessStore(defaults: defaults).bookings.isEmpty)
 var nearby = DiscoveryQuery()

@@ -41,7 +41,7 @@ struct DiscoveryProgram: Identifiable, Codable, Hashable {
     ]
 }
 
-enum DiscoveryFilter: String, CaseIterable { case recommended = "맞춤 추천", nearby = "주변 프로그램", category = "종목별", venue = "기관별", free = "무료", paid = "유료" }
+enum DiscoveryFilter: String, CaseIterable { case recommended = "맞춤 추천", nearby = "주변 프로그램", category = "종목별", venue = "기관별", group = "인원", free = "무료", paid = "유료" }
 enum ProgramSort: String, CaseIterable { case distance = "거리순", date = "일정순", reviews = "후기순" }
 
 struct DiscoveryQuery {
@@ -50,6 +50,7 @@ struct DiscoveryQuery {
     var radius = 1.5
     var category = "전체"
     var venue = "전체"
+    var smallGroupOnly = false
     var sort: ProgramSort = .distance
     var center: ProgramLocation?
 
@@ -71,6 +72,7 @@ struct DiscoveryQuery {
             case .nearby: return center != nil || radius >= 3 || item.kilometers <= radius
             case .category: return category == "전체" || category == item.category
             case .venue: return venue == "전체" || venue == item.venue
+            case .group: return !smallGroupOnly || item.smallGroup
             case .free: return item.price == 0
             case .paid: return item.price > 0
             }
@@ -170,6 +172,12 @@ struct DiscoveryView: View {
                             ForEach(DiscoveryProgram.samples.map(\.venue), id: \.self) { Text($0).tag($0) }
                         }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    if query.filter == .group {
+                        Picker("참여 인원", selection: $query.smallGroupOnly) {
+                            Text("전체").tag(false)
+                            Text("소그룹").tag(true)
+                        }.pickerStyle(.segmented)
+                    }
                     }
                 }.padding(24).background(.white)
                 if hasPlaceQuery {
@@ -186,7 +194,7 @@ struct DiscoveryView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         HStack {
-                            Text(query.center == nil ? "추천 활동" : "주변 프로그램").font(.headline)
+                            Text(query.center == nil ? "추천 운동" : "주변 프로그램").font(AppTypography.font(16, weight: .bold))
                             Text("\(results.count)건").font(.footnote).foregroundStyle(Theme.accent)
                             Spacer()
                             Picker("정렬", selection: $query.sort) {
@@ -378,9 +386,9 @@ struct ProgramCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(program.venue).font(.caption).foregroundStyle(.secondary)
-                    Text(program.title).font(.body.weight(.medium)).foregroundStyle(Theme.ink)
-                    Text("\(program.date) \(program.time)").font(.footnote).foregroundStyle(.secondary)
+                    Text(program.venue).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                    Text(program.title).font(AppTypography.font(14, weight: .medium)).foregroundStyle(Theme.ink)
+                    Text("\(program.date) \(program.time)").font(AppTypography.font(11)).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
                 SafeAssetImage(name: "NextIcon", fallback: "chevron.right").frame(width: 19, height: 26).accessibilityHidden(true)
@@ -390,7 +398,7 @@ struct ProgramCard: View {
                 VStack(alignment: .leading, spacing: 8) { tags; reviewCount }
             }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white, in: RoundedRectangle(cornerRadius: 24))
+            .background(.white, in: RoundedRectangle(cornerRadius: 20))
     }
     private var tags: some View {
         HStack(spacing: 6) {
