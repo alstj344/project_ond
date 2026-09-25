@@ -1,5 +1,13 @@
 # Calm iOS
 
+## Firebase 연결 (2026-09-24)
+
+`project-ond`의 이메일·비밀번호 인증과 서울 `ond-db` Firestore에 연결했습니다.
+회원가입·로그인·로그아웃은 Firebase를 사용하고, 회원 문서는 본인 UID로 저장합니다.
+예약·운동 조건·프로필 편집은 아직 로컬 데모입니다. 아래 이전 작업 기록의
+"인증 서버 미연결" 설명은 현재 로그인 화면에는 해당하지 않습니다.
+설정 상태와 검증 제한은 [FIREBASE-SETUP.md](FIREBASE-SETUP.md)를 참고하세요.
+
 ## Figma 32개 노드 점검 (2026-09-23)
 
 최신 변경 범위와 남은 시각 확인 항목은 [DESIGN-REVIEW.md](DESIGN-REVIEW.md)에 정리했습니다.

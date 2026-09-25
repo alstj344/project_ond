@@ -1,0 +1,29 @@
+rules_version = '2';
+// users/{auth UID}: email (1..254 characters), createdAt and updatedAt timestamps.
+// All fields required; createdAt immutable. No client roles or other fields.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['email', 'createdAt', 'updatedAt'])
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 254
+        && data.email == request.auth.token.email
+        && data.createdAt is timestamp && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
+    }
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidUser(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+      allow update: if isOwner(uid) && isValidUser(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

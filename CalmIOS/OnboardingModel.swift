@@ -1,5 +1,51 @@
 import Foundation
 
+struct ExerciseConditionsPayload: Codable {
+    var preferredExercises: [String]?
+    var availableTimes: [String]?
+    var availableDays: [String]?
+
+    static let timeCodes = ["새벽(6~9시)": "EARLY", "오전(9~12시)": "MORNING", "오후(12~3시)": "MIDDAY", "오후(3~6시)": "AFTERNOON", "저녁(6~9시)": "EVENING"]
+    static let dayCodes = ["월": "MON", "화": "TUE", "수": "WED", "목": "THU", "금": "FRI", "토": "SAT", "일": "SUN"]
+    static let typeCodes = ["걷기": "WALKING", "요가": "YOGA", "필라테스": "PILATES", "스트레칭": "STRETCHING", "수영": "SWIMMING", "헬스": "GYM", "생활체육": "SPORTS", "기타": "OTHER"]
+
+    static func decodeResponse(_ data: Data) throws -> Self {
+        struct Response: Decodable { let user: ExerciseConditionsPayload }
+        return try JSONDecoder().decode(Response.self, from: data).user
+    }
+}
+
+struct OnboardingPreferences: Codable {
+    var exerciseFrequency: String?
+    var preferredExercises: [String]?
+    var participationTypes: [String]?
+    var onboardingCompleted: Bool?
+
+    static let frequencies = ["주1~2회": "WEEKLY_1_2", "주3~4회": "WEEKLY_3_4", "월2~3회": "MONTHLY_2_3", "거의 하지 않음": "RARELY"]
+    static let formats = ["혼자": "SOLO", "1:1 코칭": "ONE_ON_ONE", "소그룹": "SMALL_GROUP"]
+    static let activities: [ExerciseActivity: String] = [.walking: "WALKING", .yoga: "YOGA", .pilates: "PILATES", .stretching: "STRETCHING", .swimming: "SWIMMING", .gym: "GYM", .sports: "SPORTS", .other: "OTHER"]
+
+    init(profile: OnboardingProfile) {
+        exerciseFrequency = Self.frequencies[profile.experience]
+        preferredExercises = ExerciseActivity.allCases.filter { profile.activities.contains($0) }.compactMap { Self.activities[$0] }
+        participationTypes = Self.formats[profile.format].map { [$0] }
+        onboardingCompleted = true
+    }
+
+    func apply(to profile: inout OnboardingProfile) {
+        if let frequency = Self.frequencies.first(where: { $0.value == exerciseFrequency }) { profile.experience = frequency.key }
+        if let preferredExercises {
+            profile.activities = Set(Self.activities.filter { preferredExercises.contains($0.value) }.map(\.key))
+        }
+        if let format = Self.formats.first(where: { participationTypes?.contains($0.value) == true }) { profile.format = format.key }
+    }
+
+    static func decodeResponse(_ data: Data) throws -> Self {
+        struct Response: Decodable { let user: OnboardingPreferences }
+        return try JSONDecoder().decode(Response.self, from: data).user
+    }
+}
+
 enum OnboardingStep: String, Hashable, CaseIterable {
     case profile, environment, experience, activities, format
     case medicalLink, medicalQuestion, medicalInfo, summary, analysis

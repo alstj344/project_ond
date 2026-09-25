@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 
 enum Attendance: String, Codable {
     case reserved, checkedIn, checkedOut
@@ -38,20 +39,30 @@ struct WellnessBooking: Identifiable, Codable {
 
 final class WellnessStore: ObservableObject {
     @Published private(set) var bookings: [WellnessBooking]
+    @Published private(set) var schedulesEnabled = false
     private let defaults: UserDefaults
-    private let key = "calm.demoBookings.v1"
+    private let ownerID: String?
+    private let key: String
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let uid = Auth.auth().currentUser?.uid
+        ownerID = uid
+        key = "calm.bookings.v2.\(uid ?? "guest")"
+        bookings = []
+    }
+
+    func setMedicalRegistration(_ registered: Bool) {
+        let enabled = registered && ownerID != nil && ownerID == Auth.auth().currentUser?.uid
+        guard schedulesEnabled != enabled else { return }
+        schedulesEnabled = enabled
+        // Preserve account-owned records on disk, but never import the old shared demo cache.
+        guard enabled else { bookings = []; return }
         if let data = defaults.data(forKey: key),
            let saved = try? JSONDecoder().decode([WellnessBooking].self, from: data) {
             bookings = saved
         } else {
-            bookings = [
-                WellnessBooking(id: "yoga", title: "릴랙스 요가", venue: "마음숲 웰니스 스페이스", day: 2, time: "10:00-10:40"),
-                WellnessBooking(id: "stretch", title: "마음 이완 슬로우 스트레칭", venue: "늘푸른복지관 다목적 힐링룸", day: 5, time: "14:00-14:50"),
-                WellnessBooking(id: "walk", title: "가벼운 걷기", venue: "마음숲 산책길", day: 6, time: "17:00-17:40")
-            ]
+            bookings = []
         }
     }
 
@@ -70,6 +81,7 @@ final class WellnessStore: ObservableObject {
     }
 
     func reserve(_ program: DiscoveryProgram) {
+        guard schedulesEnabled, ownerID == Auth.auth().currentUser?.uid else { return }
         if let index = bookings.firstIndex(where: { $0.id == program.id }) {
             guard bookings[index].isCancelled else { return }
             bookings[index].cancelledAt = nil
@@ -112,7 +124,11 @@ final class WellnessStore: ObservableObject {
 private enum HomeTab: String { case explore, home, bookings, profile }
 
 struct HomeView: View {
-    @AppStorage("calm.profileName") private var profileName = "이지은"
+    var isBrowsing = false
+    @State private var showLogin = false
+    @State private var confirmMedicalTest = false
+    @State private var registeringMedical = false
+    @State private var medicalError: String?
     @StateObject private var store = WellnessStore()
     @StateObject private var profile = ProfileStore()
     @State private var tab: HomeTab = .home
@@ -132,22 +148,49 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             Image("HomeBrand").resizable().scaledToFit().frame(width: 50, height: 31)
                                 .foregroundStyle(Theme.accent).accessibilityLabel("마음걸음")
-                            Text("\(profileName)님,\n오늘도 운동을 시작해볼까요?")
+                            VStack(alignment: .leading, spacing: 0) {
+                                if isBrowsing {
+                                    Button { showLogin = true } label: {
+                                        Text("로그인").underline()
+                                    }.buttonStyle(.plain)
+                                    Text("오늘도 운동을 시작해볼까요?")
+                                } else {
+                                    Text(profile.name.isEmpty ? "오늘도 운동을 시작해볼까요?" : "\(profile.name)님,\n오늘도 운동을 시작해볼까요?")
+                                }
+                            }
                                 .font(AppTypography.font(20, weight: .semibold))
                                 .fixedSize(horizontal: false, vertical: true)
                             if let booking = store.bookings.first(where: { $0.attendance != .checkedOut && !$0.isCancelled }) {
                                 reservationCard(booking)
                             } else {
-                                Text("예정된 운동을 모두 마쳤어요.").padding(20)
+                                Text("예정된 운동이 없어요.").padding(20)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(.white, in: RoundedRectangle(cornerRadius: 24))
                             }
                         }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
                             .background(Color(red: 147/255, green: 207/255, blue: 174/255))
                         VStack(spacing: 24) {
+                            if !isBrowsing && profile.medicalLoaded {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    if profile.hasMedicalTestData {
+                                        Label("의료 데이터 등록됨 · 테스트용", systemImage: "checkmark.circle")
+                                            .font(AppTypography.font(16, weight: .medium))
+                                        Text(profile.medicalTestData?.institution ?? "").font(AppTypography.font(13))
+                                        Text(profile.medicalTestData?.memo ?? "").font(AppTypography.font(12)).foregroundStyle(.secondary)
+                                    } else {
+                                        Text("의료 데이터를 등록해주세요").font(AppTypography.font(16, weight: .medium))
+                                        Button(registeringMedical ? "등록 중…" : "테스트 의료 데이터 등록") {
+                                            confirmMedicalTest = true
+                                        }.disabled(registeringMedical)
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+                                    .background(Theme.background, in: RoundedRectangle(cornerRadius: 8))
+                            }
                             monthlyProgress
                             schedule
-                            reviewBanner
+                            if store.bookings.contains(where: { !$0.isCancelled && $0.attendance == .checkedOut }) {
+                                reviewBanner
+                            }
                         }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
                         Divider().padding(.vertical, 16)
                         VStack(spacing: 16) {
@@ -201,9 +244,30 @@ struct HomeView: View {
             .tabItem { Label("마이페이지", systemImage: "person") }.tag(HomeTab.profile)
         }
         .tint(Theme.accent)
+        .task { if !isBrowsing { await profile.refresh() } }
+        .onChange(of: profile.hasMedicalTestData) { registered in
+            store.setMedicalRegistration(!isBrowsing && registered)
+        }
+        .confirmationDialog("테스트 의료 데이터를 등록할까요?", isPresented: $confirmMedicalTest, titleVisibility: .visible) {
+            Button("테스트 데이터 등록") {
+                registeringMedical = true
+                Task { @MainActor in
+                    defer { registeringMedical = false }
+                    do { try await profile.registerMedicalExample() }
+                    catch { medicalError = "등록하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요." }
+                }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("현재 로그인 계정에 가상 의료기관과 임시 메모를 저장합니다. 실제 진료정보가 아니며 운동 추천이나 진료 판단에 사용하지 않습니다.")
+        }
+        .alert("의료 데이터 등록", isPresented: Binding(get: { medicalError != nil }, set: { if !$0 { medicalError = nil } })) {
+            Button("확인", role: .cancel) { medicalError = nil }
+        } message: { Text(medicalError ?? "") }
         .id(navigationIdentity)
         .environment(\.returnHome, { tab = .home; navigationIdentity = UUID() })
         .environment(\.showBookings, { tab = .bookings })
+        .fullScreenCover(isPresented: $showLogin) { AuthView(mode: .login) }
     }
 
     private var monthlyProgress: some View {
@@ -292,7 +356,7 @@ struct HomeView: View {
                             Text(["일", "월", "화", "수", "목", "금", "토"][day - 1]).font(.caption2)
                             Text("\(day)").font(.footnote.weight(.semibold))
                             Image(systemName: "figure.mind.and.body").font(.system(size: 15))
-                                .opacity(store.bookings.contains { $0.day == day } ? 1 : 0)
+                                .opacity(store.bookings.contains { $0.day == day && !$0.isCancelled } ? 1 : 0)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 10)
                         .foregroundStyle(selectedDay == day ? Color.white : secondary)

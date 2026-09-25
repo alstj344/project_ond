@@ -19,6 +19,16 @@ struct OnboardingView: View {
                 .navigationDestination(for: OnboardingStep.self) { screen($0) }
         }
         .tint(Theme.accent)
+        .task {
+            #if DEBUG && targetEnvironment(simulator)
+            do {
+                let data = try await APIService.shared.getMyProfile()
+                try OnboardingPreferences.decodeResponse(data).apply(to: &profile)
+            } catch {
+                // Keep the editable defaults when there are no saved preferences.
+            }
+            #endif
+        }
         .sheet(isPresented: $showAddress) { addressEditor }
         .alert("의료진 상담 안내", isPresented: $showConsultation) {
             Button("확인", role: .cancel) {}
@@ -30,7 +40,7 @@ struct OnboardingView: View {
     @ViewBuilder
     private func screen(_ step: OnboardingStep) -> some View {
         if step == .analysis {
-            AnalysisView {
+            AnalysisView(profile: profile) {
                 if path.last == .analysis { path.removeLast() }
             }
         } else {
@@ -567,7 +577,10 @@ private struct KakaoPostcodeWebView: UIViewRepresentable {
 }
 
 private struct AnalysisView: View {
+    let profile: OnboardingProfile
     let onReview: () -> Void
+    @State private var saving = false
+    @State private var saveError: String?
     @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
     @State private var complete = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -587,8 +600,11 @@ private struct AnalysisView: View {
                     .font(AppTypography.font(14)).foregroundStyle(Theme.muted)
             }.multilineTextAlignment(.center)
             if complete {
-                Button("홈으로 이동") { onboardingCompleted = true }.buttonStyle(.borderedProminent)
+                Button(saving ? "저장 중…" : "홈으로 이동") {
+                    Task { await saveAndContinue() }
+                }.buttonStyle(.borderedProminent).disabled(saving)
                 Button("조건 다시 확인", action: onReview).buttonStyle(.plain)
+                    .disabled(saving)
             } else {
                 ProgressView().accessibilityLabel("조건 확인 중")
             }
@@ -598,6 +614,9 @@ private struct AnalysisView: View {
         .padding(.horizontal, 20)
         .frame(maxWidth: 480).frame(maxWidth: .infinity)
         .background(Theme.background.ignoresSafeArea())
+        .alert("저장 안내", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("확인", role: .cancel) { saveError = nil }
+        } message: { Text(saveError ?? "") }
         .task {
             if !reduceMotion {
                 withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { breathing = true }
@@ -607,6 +626,22 @@ private struct AnalysisView: View {
             complete = true
             breathing = false
         }
+    }
+
+    @MainActor private func saveAndContinue() async {
+        guard !saving else { return }
+        saving = true
+        defer { saving = false }
+        #if DEBUG && targetEnvironment(simulator)
+        do {
+            try await APIService.shared.saveOnboarding(profile)
+            onboardingCompleted = true
+        } catch {
+            saveError = "운동 조건을 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요."
+        }
+        #else
+        saveError = "현재 환경에서는 저장 서버에 연결할 수 없어요."
+        #endif
     }
 }
 

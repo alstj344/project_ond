@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 import MapKit
 
 struct ExerciseReflection: Codable, Equatable {
@@ -99,14 +100,45 @@ extension EnvironmentValues {
 
 struct DiscoveryView: View {
     @ObservedObject var store: WellnessStore
-    @State private var showPrograms = false
+    @State private var programs: [RemoteProgram] = []
+    @State private var preferences: OnboardingPreferences?
+    @State private var conditions: ExerciseConditionsPayload?
+    @State private var loading = false
+    @State private var loadError: String?
+    @State private var nextCursor: String?
     @State private var query = DiscoveryQuery()
     @StateObject private var placeSearch = DiscoveryPlaceSearch()
     @FocusState private var searchFocused: Bool
     @State private var searchRevision = 0
     @State private var selectedArea = ""
     private var hasPlaceQuery: Bool { !query.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var results: [DiscoveryProgram] { query.results(DiscoveryProgram.samples) }
+    private var results: [RemoteProgram] {
+        programs.filter { program in
+            if let center = query.center {
+                guard let location = program.location, center.kilometers(to: location) <= query.radius else { return false }
+            }
+            switch query.filter {
+            case .category: return query.category == "전체" || query.category == program.category
+            case .venue: return query.venue == "전체" || query.venue == program.facilityId
+            case .group: return !query.smallGroupOnly || program.participationType == "SMALL_GROUP"
+            case .free: return program.price == 0
+            case .paid: return program.price > 0
+            default: return true
+            }
+        }.sorted { left, right in
+            if query.filter == .recommended {
+                let a = left.matchScore(preferences: preferences, conditions: conditions)
+                let b = right.matchScore(preferences: preferences, conditions: conditions)
+                if a != b { return a > b }
+            }
+            if query.sort == .distance, let center = query.center {
+                let a = left.location.map { center.kilometers(to: $0) } ?? .infinity
+                let b = right.location.map { center.kilometers(to: $0) } ?? .infinity
+                if a != b { return a < b }
+            }
+            return left.startAt == right.startAt ? left.id < right.id : left.startAt < right.startAt
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -148,7 +180,7 @@ struct DiscoveryView: View {
                     if query.filter == .nearby || query.center != nil {
                         VStack(spacing: 12) {
                             HStack(alignment: .firstTextBaseline) {
-                                Text(query.center == nil ? "예시 거리" : "선택 지역 기준 거리").font(.headline)
+                                Text(query.center == nil ? "지역을 검색해 주세요" : "선택 지역 기준 거리").font(.headline)
                                 Spacer()
                                 Text(query.center == nil && query.radius >= 3 ? "3km+" : String(format: "%.1fkm", query.radius))
                                     .font(.footnote).foregroundStyle(Theme.accent)
@@ -156,20 +188,20 @@ struct DiscoveryView: View {
                             Slider(value: $query.radius, in: 0.5...(query.center == nil ? 3 : 10), step: 0.1).tint(Theme.accent)
                                 .accessibilityLabel("거리 범위").accessibilityValue(String(format: "%.1f 킬로미터", query.radius))
                             HStack { Text("500m"); Spacer(); Text(query.center == nil ? "1.5km" : "5km"); Spacer(); Text(query.center == nil ? "3km+" : "10km") }.font(.caption2).foregroundStyle(.secondary)
-                            Text(query.center == nil ? "거리와 도보 시간은 예시 정보입니다." : "서울 도심의 예시 프로그램 위치 기준 · 직선거리")
+                            Text(query.center == nil ? "" : "등록된 위치 기준 · 직선거리")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }.padding(16).background(Theme.surface, in: RoundedRectangle(cornerRadius: 20))
                     }
                     if query.filter == .category {
                         Picker("종목", selection: $query.category) {
                             Text("전체").tag("전체")
-                            ForEach(Array(Set(DiscoveryProgram.samples.map(\.category))).sorted(), id: \.self) { Text($0).tag($0) }
+                            ForEach(Array(Set(programs.map(\.category))).sorted(), id: \.self) { Text($0).tag($0) }
                         }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if query.filter == .venue {
                         Picker("기관", selection: $query.venue) {
                             Text("전체").tag("전체")
-                            ForEach(DiscoveryProgram.samples.map(\.venue), id: \.self) { Text($0).tag($0) }
+                            ForEach(Array(Set(programs.map(\.facilityId))).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
                         }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if query.filter == .group {
@@ -198,13 +230,32 @@ struct DiscoveryView: View {
                             Text("\(results.count)건").font(.footnote).foregroundStyle(Theme.accent)
                             Spacer()
                             Picker("정렬", selection: $query.sort) {
-                                ForEach(ProgramSort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                                Text("일정순").tag(ProgramSort.date)
+                                if query.center != nil { Text("거리순").tag(ProgramSort.distance) }
                             }.pickerStyle(.menu).font(.caption)
                         }
                         ForEach(results) { program in
-                            NavigationLink(value: program) { ProgramCard(program: program, distanceKilometers: query.distance(to: program)) }.buttonStyle(.plain)
+                            NavigationLink(value: program) {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text(program.title).font(AppTypography.font(16, weight: .medium))
+                                    Text(program.category).font(AppTypography.font(12)).foregroundStyle(Theme.accent)
+                                    if let date = program.startDate {
+                                        Text(date, format: .dateTime.month().day().hour().minute()).font(AppTypography.font(12))
+                                    }
+                                    Text(program.price == 0 ? "무료" : "\(program.price.formatted())원").font(AppTypography.font(13))
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+                                    .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                            }.buttonStyle(.plain)
                         }
-                        if results.isEmpty {
+                        if loading { ProgressView().padding() }
+                        if let loadError {
+                            Text(loadError).foregroundStyle(.secondary)
+                            Button("다시 시도") { Task { await loadPrograms(reset: true) } }
+                        }
+                        if nextCursor != nil && !loading {
+                            Button("더 보기") { Task { await loadPrograms(reset: false) } }
+                        }
+                        if results.isEmpty && !loading && loadError == nil {
                             VStack(spacing: 12) {
                                 Text(query.center == nil ? "조건에 맞는 활동이 없어요." : "선택한 지역과 거리 안에 등록된 프로그램이 없어요.")
                                     .foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -215,16 +266,13 @@ struct DiscoveryView: View {
                             }.padding(.vertical, 40)
                         }
                     }.padding(24)
-                }
+                }.refreshable { await loadPrograms(reset: true) }
                 }
             }
             .frame(maxWidth: 600).frame(maxWidth: .infinity)
             .background(Theme.background.ignoresSafeArea())
             .navigationTitle("탐색").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showPrograms = true } label: { Image(systemName: "square.grid.2x2") }.accessibilityLabel("전체 프로그램")
-            } }
-            .sheet(isPresented: $showPrograms) { ProgramLibraryView(store: store) }
+            .task { await loadPrograms(reset: true) }
             .onChange(of: query.text) { _ in placeSearch.cancel() }
             .task(id: "\(query.text)|\(searchRevision)") {
                 let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -233,8 +281,39 @@ struct DiscoveryView: View {
                 await placeSearch.search(text)
             }
             .onDisappear { placeSearch.cancel() }
-            .navigationDestination(for: DiscoveryProgram.self) { ProgramDetailView(program: $0, store: store) }
+            .navigationDestination(for: RemoteProgram.self) { RemoteProgramDetailView(program: $0) }
         }
+    }
+
+    @MainActor private func loadPrograms(reset: Bool) async {
+        guard !loading else { return }
+        loading = true
+        loadError = nil
+        defer { loading = false }
+        #if DEBUG && targetEnvironment(simulator)
+        do {
+            if reset {
+                preferences = nil
+                conditions = nil
+                if Auth.auth().currentUser != nil {
+                    let data = try await APIService.shared.getMyProfile()
+                    preferences = try OnboardingPreferences.decodeResponse(data)
+                    conditions = try ExerciseConditionsPayload.decodeResponse(data)
+                }
+            }
+            let page = try await APIService.shared.getPrograms(after: reset ? nil : nextCursor)
+            try Task.checkCancellation()
+            if reset { programs = page.programs }
+            else {
+                let ids = Set(programs.map(\.id))
+                programs += page.programs.filter { !ids.contains($0.id) }
+            }
+            nextCursor = page.nextCursor
+        } catch is CancellationError {
+        } catch { loadError = "프로그램과 운동 조건을 불러오지 못했어요. 다시 시도해 주세요." }
+        #else
+        loadError = "현재 환경에서는 프로그램 서버에 연결할 수 없어요."
+        #endif
     }
 }
 

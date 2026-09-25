@@ -1,0 +1,14 @@
+{
+  "firestore": {
+    "database": "ond-db",
+    "edition": "enterprise",
+    "dataAccessMode": "FIRESTORE_NATIVE",
+    "location": "asia-northeast3",
+    "rules": "firestore.rules"
+  },
+  "auth": {
+    "providers": {
+      "emailPassword": true
+    }
+  }
+}

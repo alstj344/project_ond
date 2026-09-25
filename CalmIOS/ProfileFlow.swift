@@ -1,16 +1,17 @@
 import SwiftUI
+import FirebaseAuth
 import Security
 
 struct PersonalDetails: Codable, Equatable {
-    var name = "이지은"
-    var phone = "010-0000-0000"
-    var email = "ji8219@gmail.com"
+    var name = ""
+    var phone = ""
+    var email = ""
 
     var validationMessage: String? {
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "이름을 입력해주세요." }
         let parts = phone.split(separator: "-", omittingEmptySubsequences: false)
-        if parts.count != 3 || parts[0].count != 3 || !(3...4).contains(parts[1].count) ||
-            parts[2].count != 4 || !parts.allSatisfy({ $0.allSatisfy(\.isNumber) }) {
+        if !phone.isEmpty && (parts.count != 3 || parts[0].count != 3 || !(3...4).contains(parts[1].count) ||
+            parts[2].count != 4 || !parts.allSatisfy({ $0.allSatisfy(\.isNumber) })) {
             return "전화번호를 확인해주세요."
         }
         let emailParts = email.split(separator: "@", omittingEmptySubsequences: false)
@@ -67,53 +68,104 @@ struct DevicePasswordVault {
 
 final class ProfileStore: ObservableObject {
     @Published private(set) var details: PersonalDetails
-    let userID = "ji8219"
+    private let ownerID = Auth.auth().currentUser?.uid
+    var userID: String { details.email }
+    @Published private(set) var loadError: String?
+    @Published private(set) var medicalLoaded = false
+    @Published private(set) var medicalTestData: MedicalTestData?
+    struct MedicalTestData: Decodable {
+        let isSynthetic: Bool
+        let status: String
+        let institution: String
+        let memo: String
+    }
+    var hasMedicalTestData: Bool {
+        medicalTestData?.isSynthetic == true && medicalTestData?.status == "TEST_REGISTERED"
+    }
     @Published var availableTimes: Set<String> = ["오후(3~6시)", "저녁(6~9시)"] { didSet { saveSet(availableTimes, key: "calm.conditions.times") } }
     @Published var availableDays: Set<String> = ["월", "화", "수", "목", "금"] { didSet { saveSet(availableDays, key: "calm.conditions.days") } }
     @Published var exerciseTypes: Set<String> = ["걷기", "필라테스/요가"] { didSet { saveSet(exerciseTypes, key: "calm.conditions.types") } }
     @Published var healthNote = "" {
         didSet {
             if healthNote.count > 500 { healthNote = String(healthNote.prefix(500)) }
-            defaults.set(healthNote, forKey: "calm.conditions.note")
+            defaults.set(healthNote, forKey: conditionsKey("calm.conditions.note"))
         }
     }
     private let defaults: UserDefaults
-    private let key = "calm.personalDetails.v1"
     var name: String { details.name }
     var phone: String { details.phone }
     var email: String { details.email }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        details = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(PersonalDetails.self, from: $0) } ?? PersonalDetails()
+        details = PersonalDetails(email: Auth.auth().currentUser?.email ?? "")
         if let values = loadSet("calm.conditions.times") { availableTimes = values }
         if let values = loadSet("calm.conditions.days") { availableDays = values }
         if let values = loadSet("calm.conditions.types") { exerciseTypes = values }
-        healthNote = String((defaults.string(forKey: "calm.conditions.note") ?? "").prefix(500))
+        healthNote = String((defaults.string(forKey: conditionsKey("calm.conditions.note")) ?? "").prefix(500))
     }
     private func saveConditions() {
         saveSet(availableTimes, key: "calm.conditions.times")
         saveSet(availableDays, key: "calm.conditions.days")
         saveSet(exerciseTypes, key: "calm.conditions.types")
-        defaults.set(healthNote, forKey: "calm.conditions.note")
+        defaults.set(healthNote, forKey: conditionsKey("calm.conditions.note"))
+    }
+    private func conditionsKey(_ key: String) -> String {
+        key + "." + (ownerID ?? "guest")
     }
     private func saveSet(_ value: Set<String>, key: String) {
-        if let data = try? JSONEncoder().encode(Array(value).sorted()) { defaults.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(Array(value).sorted()) { defaults.set(data, forKey: conditionsKey(key)) }
     }
     private func loadSet(_ key: String) -> Set<String>? {
-        guard let data = defaults.data(forKey: key), let values = try? JSONDecoder().decode([String].self, from: data) else { return nil }
+        guard let data = defaults.data(forKey: conditionsKey(key)), let values = try? JSONDecoder().decode([String].self, from: data) else { return nil }
         return Set(values)
     }
-    @discardableResult
-    func save(_ draft: PersonalDetails) -> Bool {
-        guard draft.validationMessage == nil else { return false }
+    @MainActor func refresh() async {
+        guard ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { return }
+        #if DEBUG && targetEnvironment(simulator)
+        do {
+            struct Response: Decodable {
+                struct User: Decodable {
+                    let name: String?; let phone: String?; let email: String
+                    let medicalTestData: MedicalTestData?
+                }
+                let user: User
+            }
+            let data = try await APIService.shared.getMyProfile()
+            let response = try JSONDecoder().decode(Response.self, from: data)
+            guard ownerID == Auth.auth().currentUser?.uid else { return }
+            details = PersonalDetails(name: response.user.name ?? "", phone: response.user.phone ?? "", email: response.user.email)
+            medicalTestData = response.user.medicalTestData
+            medicalLoaded = true
+            loadError = nil
+        } catch { loadError = "개인정보를 불러오지 못했어요. 다시 시도해 주세요." }
+        #endif
+    }
+
+    @MainActor func registerMedicalExample() async throws {
+        guard ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
+        #if DEBUG && targetEnvironment(simulator)
+        try await APIService.shared.registerMedicalTestData()
+        await refresh()
+        guard hasMedicalTestData, loadError == nil else { throw APIError.invalidResponse }
+        #else
+        throw APIError.serverUnavailable
+        #endif
+    }
+
+    @MainActor func save(_ draft: PersonalDetails) async throws {
+        guard ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
+        guard draft.validationMessage == nil else { throw APIError.invalidResponse }
         var clean = draft
         clean.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let data = try? JSONEncoder().encode(clean) else { return false }
-        defaults.set(data, forKey: key)
-        defaults.set(clean.name, forKey: "calm.profileName")
+        clean.email = Auth.auth().currentUser?.email ?? ""
+        #if DEBUG && targetEnvironment(simulator)
+        try await APIService.shared.savePersonalDetails(name: clean.name, phone: clean.phone)
+        guard ownerID == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
         details = clean
-        return true
+        #else
+        throw APIError.serverUnavailable
+        #endif
     }
 }
 
@@ -201,6 +253,13 @@ struct MyPageView: View {
                 .sheet(item: $actionSheet) { action in
                     ProfileActionSheet(action: action, onCancel: { actionSheet = nil }, onConfirm: {
                         if action == .logout {
+                            do { try Auth.auth().signOut() }
+                            catch {
+                                notice = error.localizedDescription
+                                showNotice = true
+                                actionSheet = nil
+                                return
+                            }
                             onboardingCompleted = false
                             actionSheet = nil
                         } else {
@@ -243,21 +302,21 @@ struct MyPageView: View {
     private var medical: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("서울마음편한정신의학과").font(AppTypography.font(16, weight: .medium))
-                Text("김선우 전문의").foregroundStyle(ProfileStyle.muted)
+                Text(profile.hasMedicalTestData ? (profile.medicalTestData?.institution ?? "") : "의료 데이터 미등록").font(AppTypography.font(16, weight: .medium))
+                Text(profile.hasMedicalTestData ? "등록됨 · 테스트용" : "의료 데이터를 등록해주세요").foregroundStyle(ProfileStyle.muted)
                 HStack {
-                    Text("최근 데이터 동기화")
+                    Text("의료기관 연동")
                     Spacer()
-                    Text("2025.05.02")
+                    Text("미연결")
                 }.font(AppTypography.font(11)).foregroundStyle(ProfileStyle.pale).padding(.top, 6)
             }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(ProfileStyle.background, in: RoundedRectangle(cornerRadius: 16))
-            Button { inform("의료기관 연결이 필요합니다. 현재 표시된 기관과 동기화 날짜는 디자인 예시이며, 실제 의료정보를 조회하거나 전송하지 않습니다.") } label: {
+            Button { inform(profile.hasMedicalTestData ? (profile.medicalTestData?.memo ?? "테스트 데이터입니다.") : "홈에서 테스트 의료 데이터를 등록할 수 있어요. 실제 의료기관 연동은 아직 지원하지 않습니다.") } label: {
                 HStack(spacing: 8) {
                     Image("ProfileSync").resizable().scaledToFit().frame(width: 14, height: 14)
-                    Text("의료 권장 데이터 재동기화").font(AppTypography.font(13, weight: .medium))
+                    Text("의료 데이터 안내").font(AppTypography.font(13, weight: .medium))
                 }.frame(maxWidth: .infinity, minHeight: 42).foregroundStyle(.white).background(ProfileStyle.accent, in: Capsule())
             }.buttonStyle(.plain)
-            Text("운동에 필요한 정보만 안전하게 활용해요. 진료 기록 전체가 아닌, 운동에 필요한 안전 조건과 권장사항만 추천에 반영해요.")
+            Text("테스트 의료 데이터는 실제 진료정보가 아니며 운동 추천이나 진료 판단에 사용하지 않습니다.")
                 .font(AppTypography.font(10, relativeTo: .caption)).foregroundStyle(ProfileStyle.pale).lineSpacing(3).padding(.horizontal, 8)
         }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 32))
     }
@@ -354,6 +413,12 @@ struct InfoSummaryView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 32) {
+                if let message = profile.loadError {
+                    VStack(spacing: 8) {
+                        Text(message).font(AppTypography.font(12)).foregroundStyle(.secondary)
+                        Button("다시 불러오기") { Task { await profile.refresh() } }
+                    }
+                }
                 NavigationLink { PersonalEditView(profile: profile) } label: {
                     VStack(spacing: 12) {
                         heading("개인정보")
@@ -380,6 +445,7 @@ struct InfoSummaryView: View {
                     .font(AppTypography.font(12)).foregroundStyle(ProfileStyle.muted).padding(.top, 12)
             }.padding(24).padding(.top, 12).frame(maxWidth: 600).frame(maxWidth: .infinity)
         }.modifier(ProfilePageChrome(title: "정보 수정"))
+            .task { await profile.refresh() }
     }
     private func heading(_ title: String) -> some View {
         HStack { Text(title).font(AppTypography.font(16, weight: .bold)); Spacer(); ProfileArrow() }.padding(.horizontal, 8)
@@ -387,27 +453,30 @@ struct InfoSummaryView: View {
     private func row(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(AppTypography.font(11)).foregroundStyle(ProfileStyle.muted)
-            Text(value).font(AppTypography.font(13)).foregroundStyle(ProfileStyle.ink)
+            Text(value.isEmpty ? "미등록" : value).font(AppTypography.font(13)).foregroundStyle(ProfileStyle.ink)
         }.padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
     }
 }
 
 private struct ProfileEditActions: View {
     let enabled: Bool
+    var saving = false
     let cancel: () -> Void
     let save: () -> Void
     var body: some View {
         HStack(spacing: 8) {
             Button(action: cancel) {
                 Text("취소").frame(maxWidth: .infinity, minHeight: 56)
-                    .foregroundStyle(ProfileStyle.muted).background(ProfileStyle.surface, in: Capsule())
-            }.frame(maxWidth: 110)
+                    .foregroundStyle(ProfileStyle.pale).background(ProfileStyle.surface, in: Capsule())
+            }.frame(width: 110).disabled(saving)
             Button(action: save) {
-                Text("변경사항 저장").frame(maxWidth: .infinity, minHeight: 56)
+                Text(saving ? "저장 중…" : "변경사항 저장").frame(maxWidth: .infinity, minHeight: 56)
                     .foregroundStyle(.white).background(ProfileStyle.accent.opacity(enabled ? 1 : 0.45), in: Capsule())
-            }.disabled(!enabled)
+            }.disabled(!enabled || saving)
         }.font(AppTypography.font(16, weight: .medium)).buttonStyle(.plain)
-            .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 24).background(ProfileStyle.background)
+            .frame(maxWidth: 354)
+            .padding(.horizontal, 24).frame(maxWidth: .infinity)
+            .padding(.top, 12).padding(.bottom, 30).background(ProfileStyle.background)
     }
 }
 
@@ -422,6 +491,7 @@ struct PersonalEditView: View {
     @State private var domain: String
     @State private var customDomain = false
     @State private var saved = false
+    @State private var saving = false
     @State private var error = ""
     private let prefixes = ["010", "011", "016", "017", "018", "019"]
     private let domains = ["gmail.com", "naver.com", "daum.net", "hanmail.net", "icloud.com"]
@@ -430,7 +500,7 @@ struct PersonalEditView: View {
         self.profile = profile
         _name = State(initialValue: profile.name)
         let phone = profile.phone.components(separatedBy: "-")
-        _prefix = State(initialValue: phone.first ?? "010")
+        _prefix = State(initialValue: profile.phone.isEmpty ? "010" : (phone.first ?? "010"))
         _middle = State(initialValue: phone.count > 1 ? phone[1] : "")
         _last = State(initialValue: phone.count > 2 ? phone[2] : "")
         let email = profile.email.components(separatedBy: "@")
@@ -438,7 +508,7 @@ struct PersonalEditView: View {
         _domain = State(initialValue: email.count > 1 ? email[1] : "gmail.com")
     }
     private var draft: PersonalDetails {
-        PersonalDetails(name: name, phone: "\(prefix)-\(middle)-\(last)", email: "\(mailbox)@\(domain)")
+        PersonalDetails(name: name, phone: middle.isEmpty && last.isEmpty ? "" : "\(prefix)-\(middle)-\(last)", email: profile.email)
     }
 
     var body: some View {
@@ -472,15 +542,21 @@ struct PersonalEditView: View {
                                 HStack { Text(domain).lineLimit(1).minimumScaleFactor(0.75); Spacer(minLength: 0); Image(systemName: "chevron.down").font(.caption).foregroundStyle(ProfileStyle.pale) }.profileInput()
                             }
                         }
-                    }
+                    }.disabled(true)
                 }
                 if !error.isEmpty { Text(error).foregroundStyle(.red).font(AppTypography.font(12)).accessibilityIdentifier("profile.error") }
             }.padding(24).padding(.top, 8).frame(maxWidth: 600).frame(maxWidth: .infinity)
         }.scrollDismissesKeyboard(.interactively).modifier(ProfilePageChrome(title: "개인정보 수정"))
             .safeAreaInset(edge: .bottom) {
-                ProfileEditActions(enabled: true, cancel: { dismiss() }) {
+                ProfileEditActions(enabled: true, saving: saving, cancel: { dismiss() }) {
                     error = draft.validationMessage ?? ""
-                    if error.isEmpty && profile.save(draft) { saved = true }
+                    guard error.isEmpty, !saving else { return }
+                    saving = true
+                    Task { @MainActor in
+                        defer { saving = false }
+                        do { try await profile.save(draft); saved = true }
+                        catch { self.error = "개인정보를 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요." }
+                    }
                 }
             }
             .fullScreenCover(isPresented: $saved, onDismiss: { dismiss() }) {
@@ -594,7 +670,15 @@ struct SavedChangesView: View {
                 }.frame(maxWidth: .infinity).padding(.horizontal, 24)
             }
         }.background(ProfileStyle.background.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) { FlowAction(title: "확인", action: onDone).padding(24).padding(.bottom, 20).background(ProfileStyle.background) }
+            .safeAreaInset(edge: .bottom) {
+                Button(action: onDone) {
+                    Text("확인").font(AppTypography.font(16, weight: .medium))
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .foregroundStyle(.white).background(ProfileStyle.accent, in: Capsule())
+                }.buttonStyle(.plain).frame(maxWidth: 354)
+                    .padding(.horizontal, 24).frame(maxWidth: .infinity)
+                    .padding(.top, 12).padding(.bottom, 30).background(ProfileStyle.background)
+            }
             .interactiveDismissDisabled()
     }
 }
@@ -680,33 +764,118 @@ private extension View {
 
 struct ExerciseConditionsView: View {
     @ObservedObject var profile: ProfileStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var saved = false
+    @State private var draftTimes: Set<String> = []
+    @State private var draftDays: Set<String> = []
+    @State private var draftTypes: Set<String> = []
+    @State private var draftNote = ""
+    @State private var loaded = false
+    @State private var busy = false
+    @State private var notice: String?
+    @State private var ownerID: String?
     private let times = ["새벽(6~9시)", "오전(9~12시)", "오후(12~3시)", "오후(3~6시)", "저녁(6~9시)"]
     private let days = ["월", "화", "수", "목", "금", "토", "일"]
-    private let types = ["걷기", "필라테스/요가", "스트레칭", "수영", "헬스", "기타"]
+    private let types = ["걷기", "요가", "필라테스", "스트레칭", "수영", "헬스", "생활체육", "기타"]
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 section("운동 시간", "운동 가능한 시간을 선택해주세요.") {
-                    chips(times, selection: $profile.availableTimes, columns: 3)
+                    chips(times, selection: $draftTimes, columns: 3)
                 }
                 section("운동 요일", "운동을 희망하는 요일을 선택해주세요.") {
-                    chips(days, selection: $profile.availableDays, columns: 7)
+                    chips(days, selection: $draftDays, columns: 7)
                 }
                 section("운동 종류", "선호하는 운동 종류를 선택해주세요.") {
-                    chips(types, selection: $profile.exerciseTypes, columns: 3)
+                    chips(types, selection: $draftTypes, columns: 3)
                 }
                 section("운동 종류", "건강 상태나 특별히 고려해야 할 사항이 있다면 알려주세요.") {
                     VStack(alignment: .trailing, spacing: 8) {
-                        TextField("예) 우울증 치료 중이라 과격한 운동은 피하고 싶어요.", text: $profile.healthNote, axis: .vertical)
+                        TextField("예) 우울증 치료 중이라 과격한 운동은 피하고 싶어요.", text: $draftNote, axis: .vertical)
                             .lineLimit(5...8).font(AppTypography.font(13))
                             .accessibilityLabel("건강 상태와 고려 사항")
-                        Text("\(profile.healthNote.count)/500").font(AppTypography.font(11)).foregroundStyle(ProfileStyle.muted)
+                        Text("\(draftNote.count)/500").font(AppTypography.font(11)).foregroundStyle(ProfileStyle.muted)
                     }.padding(16).background(.white, in: RoundedRectangle(cornerRadius: 20))
                 }
-                Text("입력하신 정보는 이 기기에만 저장됩니다.")
+                Text("건강 메모는 이 기기에만 저장되며 서버나 강사에게 전송되지 않습니다.")
                     .font(AppTypography.font(11)).foregroundStyle(ProfileStyle.muted).padding(.top, -20)
             }.padding(.horizontal, 24).padding(.vertical, 32).frame(maxWidth: 600).frame(maxWidth: .infinity)
         }.modifier(ProfilePageChrome(title: "나의 운동 조건"))
+        .disabled(busy || !loaded)
+        .safeAreaInset(edge: .bottom) {
+            if loaded {
+                ProfileEditActions(enabled: !draftTimes.isEmpty && !draftDays.isEmpty && !draftTypes.isEmpty,
+                                   saving: busy, cancel: { dismiss() }, save: { Task { await save() } })
+            } else {
+                Button(busy ? "불러오는 중…" : "다시 불러오기") { Task { await load() } }
+                    .font(AppTypography.font(16, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .foregroundStyle(.white).background(ProfileStyle.accent, in: Capsule())
+                    .buttonStyle(.plain).disabled(busy).frame(maxWidth: 354)
+                    .padding(.horizontal, 24).frame(maxWidth: .infinity)
+                    .padding(.top, 12).padding(.bottom, 30).background(ProfileStyle.background)
+            }
+        }
+        .fullScreenCover(isPresented: $saved, onDismiss: { dismiss() }) {
+            SavedChangesView { saved = false }
+        }
+        .task { if !loaded { await load() } }
+        .onChange(of: draftNote) { value in
+            if value.count > 500 { draftNote = String(value.prefix(500)) }
+        }
+        .alert("운동 조건", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+            Button("확인", role: .cancel) { notice = nil }
+        } message: { Text(notice ?? "") }
+    }
+
+    @MainActor private func load() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        #if DEBUG && targetEnvironment(simulator)
+        do {
+            let uid = Auth.auth().currentUser?.uid
+            let data = try await APIService.shared.getMyProfile()
+            let saved = try ExerciseConditionsPayload.decodeResponse(data)
+            guard uid != nil, uid == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
+            ownerID = uid
+            draftTimes = Set(ExerciseConditionsPayload.timeCodes.filter { saved.availableTimes?.contains($0.value) == true }.map(\.key))
+            draftDays = Set(ExerciseConditionsPayload.dayCodes.filter { saved.availableDays?.contains($0.value) == true }.map(\.key))
+            draftTypes = Set(ExerciseConditionsPayload.typeCodes.filter { saved.preferredExercises?.contains($0.value) == true }.map(\.key))
+            draftNote = profile.healthNote
+            profile.availableTimes = draftTimes
+            profile.availableDays = draftDays
+            profile.exerciseTypes = draftTypes
+            loaded = true
+        } catch {
+            notice = "운동 조건을 불러오지 못했어요. 연결을 확인한 뒤 다시 불러와 주세요."
+        }
+        #else
+        notice = "현재 환경에서는 저장 서버에 연결할 수 없어요."
+        #endif
+    }
+
+    @MainActor private func save() async {
+        guard loaded, !busy, ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { return }
+        busy = true
+        defer { busy = false }
+        #if DEBUG && targetEnvironment(simulator)
+        do {
+            let payload = ExerciseConditionsPayload(
+                preferredExercises: draftTypes.compactMap { ExerciseConditionsPayload.typeCodes[$0] }.sorted(),
+                availableTimes: draftTimes.compactMap { ExerciseConditionsPayload.timeCodes[$0] }.sorted(),
+                availableDays: draftDays.compactMap { ExerciseConditionsPayload.dayCodes[$0] }.sorted())
+            try await APIService.shared.saveConditions(payload)
+            guard ownerID == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
+            profile.availableTimes = draftTimes
+            profile.availableDays = draftDays
+            profile.exerciseTypes = draftTypes
+            profile.healthNote = draftNote
+            saved = true
+        } catch {
+            notice = "저장하지 못했어요. 입력한 내용은 유지되니 다시 시도해 주세요."
+        }
+        #endif
     }
     private func section<Content: View>(_ title: String, _ subtitle: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {

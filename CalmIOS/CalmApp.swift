@@ -1,13 +1,95 @@
 import SwiftUI
+import FirebaseCore
+import FirebaseAuth
+import FirebaseFirestore
+
+enum SignInNotice {
+    static func message(for error: Error, createdAccount: Bool) -> String {
+        if createdAccount {
+            return "가입한 계정으로 로그인해 주세요. 연결이 원활하지 않으면 잠시 후 다시 시도해 주세요."
+        }
+        let nsError = error as NSError
+        if let apiError = error as? APIError {
+            switch apiError {
+            case .notLoggedIn: return "로그인 정보를 확인하지 못했어요. 다시 로그인해 주세요."
+            case .profileMissing: return "회원정보를 찾지 못했어요. 잠시 후 다시 시도해 주세요."
+            default: return "회원정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
+            }
+        }
+        if nsError.domain == NSURLErrorDomain {
+            return "서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요."
+        }
+        if nsError.domain == AuthErrorDomain {
+            switch AuthErrorCode(rawValue: nsError.code) {
+            case .emailAlreadyInUse: return "이미 가입된 이메일이에요. 로그인해 주세요."
+            case .invalidEmail: return "이메일 주소를 확인해 주세요."
+            case .weakPassword: return "비밀번호를 더 안전하게 설정해 주세요."
+            case .wrongPassword, .invalidCredential, .userNotFound:
+                return "이메일 또는 비밀번호를 확인해 주세요."
+            case .networkError: return "인터넷 연결을 확인하고 다시 시도해 주세요."
+            case .tooManyRequests: return "잠시 후 다시 시도해 주세요."
+            case .userDisabled: return "이용이 제한된 계정이에요. 고객센터에 문의해 주세요."
+            default: break
+            }
+        }
+        return "연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
+    }
+}
+
+final class FirebaseSession: ObservableObject {
+    @Published var userID: String?
+    private var listener: AuthStateDidChangeListenerHandle?
+
+    init() {
+        userID = Auth.auth().currentUser?.uid
+        listener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            self?.userID = user?.uid
+        }
+    }
+
+    deinit {
+        if let listener { Auth.auth().removeStateDidChangeListener(listener) }
+    }
+
+    static func ensureUserDocument(_ user: User) async throws {
+        let database = Firestore.firestore(database: "ond-db")
+        let document = database.collection("users").document(user.uid)
+        let email = user.email ?? ""
+        // A transaction reads without the unsupported Listen stream.
+        _ = try await database.runTransaction { transaction, errorPointer in
+            do {
+                let snapshot = try transaction.getDocument(document)
+                if !snapshot.exists {
+                    transaction.setData([
+                        "email": email,
+                        "createdAt": FieldValue.serverTimestamp(),
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: document)
+                }
+                return true
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+        }
+    }
+}
 
 @main
 struct CalmApp: App {
-    init() { AppTypography.register() }
+    @StateObject private var session: FirebaseSession
+    init() {
+        FirebaseApp.configure()
+        AppTypography.register()
+        // This flag controls local navigation, not the saved Firestore onboarding state.
+        UserDefaults.standard.set(false, forKey: "calm.onboardingCompleted")
+        _session = StateObject(wrappedValue: FirebaseSession())
+    }
     @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
     var body: some Scene {
         WindowGroup {
             Group {
-                if onboardingCompleted { HomeView() }
+                if session.userID != nil && onboardingCompleted { HomeView().id(session.userID) }
                 else { LaunchGate() }
             }
                 .tint(Theme.accent)
@@ -78,12 +160,7 @@ struct WelcomeView: View {
             }.background(Theme.background.ignoresSafeArea())
         }
         .fullScreenCover(isPresented: $browsing) {
-            NavigationStack {
-                HomeView().safeAreaInset(edge: .top) {
-                    HStack { Button("둘러보기 종료") { browsing = false }; Spacer() }
-                        .padding(.horizontal, 24).padding(.vertical, 8).background(Theme.background)
-                }
-            }
+            HomeView(isBrowsing: true)
         }
         .fullScreenCover(item: $authMode) { mode in
             if mode == .signup { SignupView() } else { AuthView(mode: mode) }
@@ -158,7 +235,7 @@ private struct SignupView: View {
                         .accessibilityLabel("뒤로 가기")
                 }
             }
-            .fullScreenCover(isPresented: $showAgreement) { AgreementView() }
+            .fullScreenCover(isPresented: $showAgreement) { AuthView(mode: .signup) }
             .fullScreenCover(isPresented: $showLogin) { AuthView(mode: .login) }
         }
     }
@@ -172,11 +249,15 @@ struct AuthView: View {
     @State private var showResult = false
     @State private var revealPassword = false
     @State private var showSignup = false
+    @State private var submitting = false
+    @State private var errorMessage = ""
+    @State private var showAgreement = false
+    @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
 
     private var validInput: Bool {
         let value = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !value.isEmpty && !value.contains(where: \.isWhitespace)
-            && password.count >= (mode == .signup ? 8 : 1)
+        return value.contains("@") && !value.contains(where: \.isWhitespace)
+            && password.count >= (mode == .signup ? 8 : 1) && !submitting
     }
 
     var body: some View {
@@ -185,7 +266,7 @@ struct AuthView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("오늘도 운동을 이어가볼까요?")
+                            Text(mode == .signup ? "이메일로 가입해볼까요?" : "오늘도 운동을 이어가볼까요?")
                                 .font(AppTypography.font(24, weight: .bold, relativeTo: .title2))
                             Text("로그인하고 나에게 맞는 운동을 이어가보세요.")
                                 .font(AppTypography.font(14)).foregroundStyle(Theme.muted)
@@ -195,15 +276,15 @@ struct AuthView: View {
                         .padding(.horizontal, 4).padding(.top, 32)
 
                         VStack(spacing: 12) {
-                            TextField("아이디 입력", text: $email)
-                                .textContentType(.username)
+                            TextField("이메일 입력", text: $email)
+                                .textContentType(.emailAddress).keyboardType(.emailAddress)
                                 .padding(.horizontal, 16).frame(minHeight: 56)
                                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
                             HStack(spacing: 0) {
                                 Group {
                                     if revealPassword { TextField("비밀번호 입력", text: $password) }
                                     else { SecureField("비밀번호 입력", text: $password) }
-                                }.textContentType(.password)
+                                }.textContentType(mode == .signup ? .newPassword : .password)
                                 Button { revealPassword.toggle() } label: {
                                     SafeAssetImage(name: revealPassword ? "PasswordHidden" : "PasswordVisible", fallback: revealPassword ? "eye.slash" : "eye")
                                         .frame(width: 18, height: 14).frame(width: 44, height: 44)
@@ -214,15 +295,15 @@ struct AuthView: View {
                         .font(AppTypography.font(14)).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .padding(.horizontal, 4).padding(.top, 128)
 
-                        Button { password = ""; showResult = true } label: {
-                            Text("로그인").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
+                        Button { Task { await submit() } } label: {
+                            Text(submitting ? "처리 중…" : mode.title).font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, minHeight: 56)
                                 .background(Theme.accent, in: Capsule())
                         }.buttonStyle(.plain).disabled(!validInput).padding(.top, 32)
-                        HStack(spacing: 4) {
+                        if mode == .login { HStack(spacing: 4) {
                             Text("아직 계정이 없나요?").foregroundStyle(Theme.muted)
                             Button("회원가입") { showSignup = true }.underline().frame(minHeight: 44)
-                        }.font(AppTypography.font(13))
+                        }.font(AppTypography.font(13)) }
                         Spacer(minLength: 36)
                         Image("LoginIllustration").resizable().scaledToFit()
                             .frame(width: 64, height: 40).accessibilityHidden(true)
@@ -234,7 +315,7 @@ struct AuthView: View {
             }
             .background(Theme.background.ignoresSafeArea())
             .foregroundStyle(Theme.ink)
-            .navigationTitle("로그인").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(mode.title).navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
@@ -243,12 +324,63 @@ struct AuthView: View {
                         .accessibilityLabel("뒤로 가기")
                 }
             }
-            .fullScreenCover(isPresented: $showSignup) { AgreementView() }
-            .alert("입력 형식 확인 완료", isPresented: $showResult) {
+            .fullScreenCover(isPresented: $showSignup) { AuthView(mode: .signup) }
+            .fullScreenCover(isPresented: $showAgreement) { AgreementView() }
+            .alert("인증 안내", isPresented: $showResult) {
                 Button("확인", role: .cancel) {}
             } message: {
-                Text("실제 계정 생성 및 로그인에는 인증 서버 연결이 필요합니다.")
+                Text(errorMessage)
             }
+        }
+    }
+
+    @MainActor private func submit() async {
+        guard validInput else { return }
+        submitting = true
+        var createdAccount = false
+        var stage = "Firebase Auth"
+        #if DEBUG
+        print("[Login] project_ond transaction-profile build")
+        #endif
+        defer { submitting = false }
+        do {
+            let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            onboardingCompleted = false
+            if mode == .signup {
+                let result = try await Auth.auth().createUser(withEmail: address, password: password)
+                createdAccount = true
+                stage = "Firestore profile"
+                try await FirebaseSession.ensureUserDocument(result.user)
+                showAgreement = true
+            } else {
+                let result = try await Auth.auth().signIn(withEmail: address, password: password)
+                #if DEBUG
+                print("[Login] Firebase Auth succeeded")
+                #endif
+                stage = "Firestore profile"
+                try await FirebaseSession.ensureUserDocument(result.user)
+                #if DEBUG
+                print("[Login] Firestore profile succeeded")
+                #endif
+                #if DEBUG && targetEnvironment(simulator)
+                stage = "Express profile"
+                let data = try await APIService.shared.getMyProfile()
+                let saved = try OnboardingPreferences.decodeResponse(data)
+                print("[Login] Express profile succeeded")
+                onboardingCompleted = saved.onboardingCompleted == true
+                if !onboardingCompleted { showAgreement = true }
+                #else
+                onboardingCompleted = true
+                #endif
+            }
+            password = ""
+        } catch {
+            #if DEBUG
+            let diagnostic = error as NSError
+            print("[Login] Failed at \(stage); domain=\(diagnostic.domain); code=\(diagnostic.code)")
+            #endif
+            errorMessage = SignInNotice.message(for: error, createdAccount: createdAccount)
+            showResult = true
         }
     }
 }
