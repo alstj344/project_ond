@@ -170,6 +170,10 @@ struct HomeView: View {
                         }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
                             .background(Color(red: 147/255, green: 207/255, blue: 174/255))
                         VStack(spacing: 24) {
+                            if let error = profile.loadError, !isBrowsing {
+                                Text(error).foregroundStyle(.secondary)
+                                Button("다시 시도") { Task { await profile.refresh() } }
+                            }
                             if !isBrowsing && profile.medicalLoaded {
                                 VStack(alignment: .leading, spacing: 12) {
                                     if profile.hasMedicalTestData {
@@ -201,20 +205,16 @@ struct HomeView: View {
                                     Image(systemName: "chevron.right")
                                 }
                             }.buttonStyle(.plain).padding(.horizontal, 24)
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(DiscoveryProgram.samples) { program in
-                                        NavigationLink { ProgramDetailView(program: program, store: store).toolbar(.visible, for: .navigationBar) } label: {
-                                            ProgramCard(program: program).frame(width: 290)
-                                        }.buttonStyle(.plain)
-                                    }
-                                }.padding(.horizontal, 24)
-                            }
+                            Button { tab = .explore } label: {
+                                Label("내 조건에 맞는 프로그램 찾기", systemImage: "magnifyingglass")
+                                    .frame(maxWidth: .infinity, minHeight: 48)
+                            }.padding(.horizontal, 24)
                         }
                         .padding(.bottom, 24)
                     }.font(AppTypography.font(13)).foregroundStyle(Theme.ink)
                 }
                 .background(.white)
+                .refreshable { if !isBrowsing { await profile.refresh() } }
                 .background(Color(red: 147/255, green: 207/255, blue: 174/255).ignoresSafeArea(edges: .top))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar(.hidden, for: .navigationBar)

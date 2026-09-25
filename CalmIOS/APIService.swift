@@ -73,6 +73,35 @@ struct ProgramPage: Decodable {
     let nextCursor: String?
 }
 
+struct RemoteFacility: Decodable, Identifiable, Hashable {
+    struct Transit: Decodable, Hashable { let name: String; let mode: String }
+    let id: String
+    let name: String
+    let address: String
+    let addressDetail: String
+    let category: String
+    let facilityType: String
+    let district: String
+    let latitude: Double?
+    let longitude: Double?
+    let phone: String
+    let sourceSnapshot: String
+    let distanceKm: Double?
+    let nearbyTransit: [Transit]
+    var location: ProgramLocation? {
+        guard let latitude, let longitude, (33...39).contains(latitude), (124...132).contains(longitude) else { return nil }
+        return ProgramLocation(latitude: latitude, longitude: longitude)
+    }
+}
+
+struct FacilityPage: Decodable {
+    let success: Bool
+    let facilities: [RemoteFacility]
+    let total: Int
+    let nextPage: Int?
+    let categories: [String]
+}
+
 #if DEBUG && targetEnvironment(simulator)
 private final class ProfileRedirectBlocker: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -90,6 +119,29 @@ final class APIService {
     private let baseURL = "http://localhost:3000"
 
     private init() {}
+
+    func getFacilities(search: String, category: String, center: ProgramLocation?, radius: Double, page: Int) async throws -> FacilityPage {
+        var components = URLComponents(string: "\(baseURL)/api/facilities")!
+        var items = [URLQueryItem(name: "q", value: search), URLQueryItem(name: "category", value: category),
+                     URLQueryItem(name: "page", value: String(page))]
+        if let center {
+            items += [URLQueryItem(name: "lat", value: String(center.latitude)),
+                      URLQueryItem(name: "lon", value: String(center.longitude)),
+                      URLQueryItem(name: "radius", value: String(radius))]
+        }
+        components.queryItems = items
+        guard let url = components.url else { throw APIError.invalidURL }
+        let session = URLSession(configuration: .ephemeral, delegate: ProfileRedirectBlocker(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw APIError.serverUnavailable }
+        let result = try JSONDecoder().decode(FacilityPage.self, from: data)
+        guard result.success else { throw APIError.invalidResponse }
+        return result
+    }
 
     func getPrograms(after: String? = nil) async throws -> ProgramPage {
         var components = URLComponents(string: "\(baseURL)/api/programs")!

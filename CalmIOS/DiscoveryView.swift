@@ -52,7 +52,7 @@ struct DiscoveryQuery {
     var category = "전체"
     var venue = "전체"
     var smallGroupOnly = false
-    var sort: ProgramSort = .distance
+    var sort: ProgramSort = .date
     var center: ProgramLocation?
 
     func distance(to program: DiscoveryProgram) -> Double? {
@@ -99,6 +99,21 @@ extension EnvironmentValues {
 }
 
 struct DiscoveryView: View {
+    @ObservedObject var store: WellnessStore
+    @State private var showPrograms = false
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("탐색 대상", selection: $showPrograms) {
+                Text("기관").tag(false)
+                Text("프로그램").tag(true)
+            }.pickerStyle(.segmented).padding(.horizontal, 24).padding(.vertical, 8)
+            if showPrograms { ProgramDiscoveryView(store: store) }
+            else { FacilityDiscoveryView() }
+        }
+    }
+}
+
+private struct ProgramDiscoveryView: View {
     @ObservedObject var store: WellnessStore
     @State private var programs: [RemoteProgram] = []
     @State private var preferences: OnboardingPreferences?
@@ -162,7 +177,7 @@ struct DiscoveryView: View {
                                 Label(selectedArea, systemImage: "mappin.and.ellipse").lineLimit(2)
                             }.buttonStyle(.plain).foregroundStyle(Theme.accent)
                             Spacer()
-                            Button { query.center = nil; selectedArea = ""; query.radius = 1.5 } label: { Image(systemName: "xmark.circle.fill") }
+                            Button { query.center = nil; selectedArea = ""; query.radius = 1.5; query.sort = .date } label: { Image(systemName: "xmark.circle.fill") }
                                 .accessibilityLabel("선택 지역 해제")
                         }.font(.subheadline)
                     }
@@ -314,6 +329,204 @@ struct DiscoveryView: View {
         #else
         loadError = "현재 환경에서는 프로그램 서버에 연결할 수 없어요."
         #endif
+    }
+}
+
+private struct FacilityDiscoveryView: View {
+    @State private var search = ""
+    @State private var category = ""
+    @State private var facilities: [RemoteFacility] = []
+    @State private var categories: [String] = []
+    @State private var total = 0
+    @State private var nextPage: Int?
+    @State private var loading = false
+    @State private var errorMessage: String?
+    @State private var requestID = UUID()
+    @State private var center: ProgramLocation?
+    @State private var radius = 3.0
+    @State private var selected: RemoteFacility?
+    @State private var region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 37.5665, longitude: 126.9780),
+        span: MKCoordinateSpan(latitudeDelta: 0.15, longitudeDelta: 0.15))
+    private var requestKey: String { "\(search)|\(category)|\(center?.latitude ?? 0)|\(center?.longitude ?? 0)|\(radius)" }
+    private var pins: [RemoteFacility] { Array(facilities.filter { $0.location != nil }.prefix(100)) }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("지역 또는 기관명 검색", text: $search).submitLabel(.search)
+                            .autocorrectionDisabled()
+                        if !search.isEmpty {
+                            Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .accessibilityLabel("검색어 지우기")
+                        }
+                    }.padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                    HStack {
+                        Text("서울 기관").font(.headline)
+                        Spacer()
+                        Picker("종목", selection: $category) {
+                            Text("전체 종목").tag("")
+                            ForEach(categories, id: \.self) { Text($0).tag($0) }
+                        }.pickerStyle(.menu)
+                    }
+                    Map(coordinateRegion: $region, annotationItems: pins) { facility in
+                        MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: facility.latitude!, longitude: facility.longitude!)) {
+                            Button { selected = facility } label: {
+                                Image(systemName: "mappin.circle.fill").font(.system(size: 28))
+                                    .foregroundStyle(Theme.accent).background(.white, in: Circle())
+                                    .frame(width: 44, height: 44)
+                            }.buttonStyle(.plain).accessibilityLabel(facility.name)
+                        }
+                    }.frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .accessibilityLabel("기관 위치 지도")
+                    HStack {
+                        Button {
+                            search = ""
+                            center = ProgramLocation(latitude: region.center.latitude, longitude: region.center.longitude)
+                        } label: { Label("이 지도 주변", systemImage: "scope") }
+                        Spacer()
+                        if center != nil {
+                            Button("지역 해제") { center = nil }
+                        }
+                    }.font(.subheadline)
+                    if center != nil {
+                        HStack {
+                            Text("반경 \(radius, specifier: "%.1f")km").font(.caption).frame(width: 88, alignment: .leading)
+                            Slider(value: $radius, in: 0.5...10, step: 0.5).accessibilityLabel("검색 반경")
+                        }
+                    }
+                    HStack {
+                        Text("\(total)곳").font(.headline)
+                        Spacer()
+                        Text("지도 \(pins.count)곳 표시").font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let errorMessage {
+                        Text(errorMessage).foregroundStyle(.secondary)
+                        Button("다시 시도") { Task { await load(page: 0, reset: true) } }
+                    }
+                    LazyVStack(spacing: 0) {
+                        ForEach(facilities) { facility in
+                            NavigationLink(value: facility) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(facility.name).font(AppTypography.font(16, weight: .medium))
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.caption)
+                                    }
+                                    Text(facility.facilityType).font(.caption).foregroundStyle(Theme.accent)
+                                    Text(facility.address).font(.subheadline).foregroundStyle(.secondary)
+                                    if let distance = facility.distanceKm {
+                                        Text("직선거리 \(distance, specifier: "%.1f")km").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if facility.location == nil { Text("위치 정보 없음").font(.caption).foregroundStyle(.secondary) }
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16)
+                            }.buttonStyle(.plain)
+                            Divider()
+                        }
+                    }
+                    if loading { ProgressView().frame(maxWidth: .infinity).padding() }
+                    if !loading && errorMessage == nil && facilities.isEmpty {
+                        Text("조건에 맞는 서울 기관이 없어요.").foregroundStyle(.secondary).padding(.vertical, 24)
+                    }
+                    if let nextPage, !loading && errorMessage == nil {
+                        Button("더 보기") { Task { await load(page: nextPage, reset: false) } }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
+            }.scrollDismissesKeyboard(.interactively)
+                .navigationTitle("탐색").navigationBarTitleDisplayMode(.inline)
+                .background(Theme.background.ignoresSafeArea())
+                .navigationDestination(for: RemoteFacility.self) { FacilityDetailView(facility: $0) }
+                .sheet(item: $selected) { facility in
+                    NavigationStack {
+                        FacilityDetailView(facility: facility)
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("닫기") { selected = nil } } }
+                    }
+                }
+                .task(id: requestKey) { await load(page: 0, reset: true, debounce: true) }
+                .refreshable { await load(page: 0, reset: true) }
+        }
+    }
+
+    @MainActor private func load(page: Int, reset: Bool, debounce: Bool = false) async {
+        if !reset && loading { return }
+        let token = UUID()
+        requestID = token
+        let key = requestKey
+        loading = true
+        errorMessage = nil
+        if reset { facilities = []; total = 0; nextPage = nil }
+        defer { if requestID == token { loading = false } }
+        do {
+            if debounce { try await Task.sleep(nanoseconds: 350_000_000) }
+            #if DEBUG && targetEnvironment(simulator)
+            let response = try await APIService.shared.getFacilities(search: search, category: category, center: center, radius: radius, page: page)
+            try Task.checkCancellation()
+            guard requestID == token, key == requestKey else { return }
+            if reset { facilities = response.facilities }
+            else {
+                let ids = Set(facilities.map(\.id))
+                facilities += response.facilities.filter { !ids.contains($0.id) }
+            }
+            total = response.total
+            nextPage = response.nextPage
+            categories = response.categories
+            if reset && center == nil { fitMap() }
+            #else
+            throw APIError.serverUnavailable
+            #endif
+        } catch is CancellationError {
+        } catch {
+            guard requestID == token, key == requestKey, !Task.isCancelled else { return }
+            errorMessage = "기관을 불러오지 못했어요. 서버 연결을 확인해주세요."
+        }
+    }
+
+    private func fitMap() {
+        let locations = pins.compactMap(\.location)
+        guard let first = locations.first else { return }
+        let minLat = locations.map(\.latitude).min() ?? first.latitude
+        let maxLat = locations.map(\.latitude).max() ?? first.latitude
+        let minLon = locations.map(\.longitude).min() ?? first.longitude
+        let maxLon = locations.map(\.longitude).max() ?? first.longitude
+        region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2),
+            span: MKCoordinateSpan(latitudeDelta: max(0.01, (maxLat - minLat) * 1.3), longitudeDelta: max(0.01, (maxLon - minLon) * 1.3)))
+    }
+}
+
+private struct FacilityDetailView: View {
+    let facility: RemoteFacility
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(facility.name).font(AppTypography.font(24, weight: .bold))
+                Text(facility.facilityType).foregroundStyle(Theme.accent)
+                Label(facility.address, systemImage: "mappin.and.ellipse")
+                if !facility.addressDetail.isEmpty { Text(facility.addressDetail).foregroundStyle(.secondary) }
+                if !facility.phone.isEmpty { Label(facility.phone, systemImage: "phone") }
+                if let location = facility.location {
+                    Button {
+                        let item = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)))
+                        item.name = facility.name
+                        item.openInMaps(launchOptions: nil)
+                    } label: { Label("지도 앱에서 보기", systemImage: "map") }
+                }
+                Divider()
+                Text("주변 대중교통").font(.headline)
+                if facility.nearbyTransit.isEmpty { Text("등록된 교통정보가 없어요.").foregroundStyle(.secondary) }
+                ForEach(Array(facility.nearbyTransit.enumerated()), id: \.offset) { _, stop in
+                    Label("\(stop.name) · \(stop.mode)", systemImage: stop.mode.contains("버스") ? "bus" : "tram")
+                }
+                Divider()
+                Text("2026년 7월 기준 시설 정보입니다. 현재 운영 여부와 이용 요금은 기관에 확인해주세요.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Text("아직 예약 가능한 프로그램이 등록되지 않았어요.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity, alignment: .leading)
+        }.navigationTitle("기관 정보").navigationBarTitleDisplayMode(.inline)
+            .background(Theme.background.ignoresSafeArea())
     }
 }
 

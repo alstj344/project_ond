@@ -82,9 +82,9 @@ final class ProfileStore: ObservableObject {
     var hasMedicalTestData: Bool {
         medicalTestData?.isSynthetic == true && medicalTestData?.status == "TEST_REGISTERED"
     }
-    @Published var availableTimes: Set<String> = ["오후(3~6시)", "저녁(6~9시)"] { didSet { saveSet(availableTimes, key: "calm.conditions.times") } }
-    @Published var availableDays: Set<String> = ["월", "화", "수", "목", "금"] { didSet { saveSet(availableDays, key: "calm.conditions.days") } }
-    @Published var exerciseTypes: Set<String> = ["걷기", "필라테스/요가"] { didSet { saveSet(exerciseTypes, key: "calm.conditions.types") } }
+    @Published var availableTimes: Set<String> = [] { didSet { saveSet(availableTimes, key: "calm.conditions.times") } }
+    @Published var availableDays: Set<String> = [] { didSet { saveSet(availableDays, key: "calm.conditions.days") } }
+    @Published var exerciseTypes: Set<String> = [] { didSet { saveSet(exerciseTypes, key: "calm.conditions.types") } }
     @Published var healthNote = "" {
         didSet {
             if healthNote.count > 500 { healthNote = String(healthNote.prefix(500)) }
@@ -136,6 +136,10 @@ final class ProfileStore: ObservableObject {
             guard ownerID == Auth.auth().currentUser?.uid else { return }
             details = PersonalDetails(name: response.user.name ?? "", phone: response.user.phone ?? "", email: response.user.email)
             medicalTestData = response.user.medicalTestData
+            let conditions = try ExerciseConditionsPayload.decodeResponse(data)
+            availableTimes = Set(ExerciseConditionsPayload.timeCodes.filter { conditions.availableTimes?.contains($0.value) == true }.map(\.key))
+            availableDays = Set(ExerciseConditionsPayload.dayCodes.filter { conditions.availableDays?.contains($0.value) == true }.map(\.key))
+            exerciseTypes = Set(ExerciseConditionsPayload.typeCodes.filter { conditions.preferredExercises?.contains($0.value) == true }.map(\.key))
             medicalLoaded = true
             loadError = nil
         } catch { loadError = "개인정보를 불러오지 못했어요. 다시 시도해 주세요." }
@@ -255,7 +259,7 @@ struct MyPageView: View {
                         if action == .logout {
                             do { try Auth.auth().signOut() }
                             catch {
-                                notice = error.localizedDescription
+                                notice = "로그아웃하지 못했어요. 다시 시도해 주세요."
                                 showNotice = true
                                 actionSheet = nil
                                 return
@@ -264,7 +268,8 @@ struct MyPageView: View {
                             actionSheet = nil
                         } else {
                             actionSheet = nil
-                            deletionCompleted = true
+                            notice = "회원탈퇴 기능은 아직 준비 중입니다. 계정은 삭제되지 않았어요."
+                            showNotice = true
                         }
                     })
                 }
@@ -577,11 +582,9 @@ struct AccountEditView: View {
     @State private var current = ""
     @State private var password = ""
     @State private var confirmation = ""
-    @State private var history: [String] = []
-    @State private var loaded = false
+    @State private var saving = false
     @State private var saved = false
     @State private var error = ""
-    private let vault = DevicePasswordVault()
 
     var body: some View {
         ScrollView {
@@ -601,36 +604,42 @@ struct AccountEditView: View {
                     }.background(ProfileStyle.surface, in: RoundedRectangle(cornerRadius: 16))
                     VStack(alignment: .leading, spacing: 6) {
                         Text("비밀번호 변경 시 유의사항").fontWeight(.medium)
-                        Text("8~16자의 영문, 숫자, 특수문자를 조합해주세요.\n이전에 사용한 비밀번호는 다시 사용할 수 없습니다.").lineSpacing(3)
+                        Text("8~16자의 영문, 숫자, 특수문자를 조합해주세요.\n현재 비밀번호와 다른 비밀번호를 입력해주세요.").lineSpacing(3)
                     }.font(AppTypography.font(13)).foregroundStyle(ProfileStyle.muted).padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading).background(ProfileStyle.surface, in: RoundedRectangle(cornerRadius: 12))
-                    if loaded && history.isEmpty {
-                        Text("이 기기에 저장된 비밀번호가 없습니다. 현재 비밀번호는 비워두고 새 비밀번호를 설정해주세요. 변경 내용은 이 기기에만 적용됩니다.")
-                            .font(AppTypography.font(11)).foregroundStyle(ProfileStyle.muted)
-                    }
                     if !error.isEmpty { Text(error).font(AppTypography.font(12)).foregroundStyle(.red) }
                 }
             }.padding(24).padding(.top, 8).frame(maxWidth: 600).frame(maxWidth: .infinity)
         }.scrollDismissesKeyboard(.interactively).modifier(ProfilePageChrome(title: "계정정보 수정"))
-            .safeAreaInset(edge: .bottom) { ProfileEditActions(enabled: loaded, cancel: { dismiss() }, save: save) }
-            .onAppear {
-                do { history = try vault.read(); loaded = true }
-                catch { self.error = "기기의 비밀번호 저장소를 열 수 없습니다. 다시 시도해주세요."; loaded = false }
-            }
+            .disabled(saving)
+            .safeAreaInset(edge: .bottom) { ProfileEditActions(enabled: !saving, cancel: { if !saving { dismiss() } }, save: save) }
             .fullScreenCover(isPresented: $saved, onDismiss: { dismiss() }) { SavedChangesView { saved = false } }
     }
 
     private func save() {
         error = ""
-        if let existing = history.last, existing != current { error = "현재 비밀번호가 일치하지 않아요."; return }
-        if history.isEmpty && !current.isEmpty { error = "최초 설정에서는 현재 비밀번호를 비워주세요."; return }
+        guard !saving else { return }
+        guard !current.isEmpty else { error = "현재 비밀번호를 입력해주세요."; return }
         if let message = PasswordRules.message(new: password, confirmation: confirmation) { error = message; return }
-        if history.contains(password) { error = "이전에 사용한 비밀번호는 다시 사용할 수 없습니다."; return }
-        do {
-            try vault.write(history + [password])
-            current = ""; password = ""; confirmation = ""
-            saved = true
-        } catch { self.error = "비밀번호를 저장하지 못했습니다. 다시 시도해주세요." }
+        guard current != password else { error = "현재 비밀번호와 다른 비밀번호를 입력해주세요."; return }
+        guard let user = Auth.auth().currentUser, let email = user.email else {
+            error = "다시 로그인해주세요."; return
+        }
+        let credential = EmailAuthProvider.credential(withEmail: email, password: current)
+        let newPassword = password
+        saving = true
+        Task { @MainActor in
+            defer { saving = false }
+            do {
+                _ = try await user.reauthenticate(with: credential)
+                guard Auth.auth().currentUser?.uid == user.uid else { throw APIError.notLoggedIn }
+                try await user.updatePassword(to: newPassword)
+                current = ""; password = ""; confirmation = ""
+                saved = true
+            } catch {
+                self.error = "비밀번호를 변경하지 못했어요. 현재 비밀번호와 네트워크 연결을 확인해주세요."
+            }
+        }
     }
 }
 

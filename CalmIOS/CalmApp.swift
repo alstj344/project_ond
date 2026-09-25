@@ -78,25 +78,44 @@ final class FirebaseSession: ObservableObject {
 @main
 struct CalmApp: App {
     @StateObject private var session: FirebaseSession
+
     init() {
         FirebaseApp.configure()
         AppTypography.register()
-        // This flag controls local navigation, not the saved Firestore onboarding state.
-        UserDefaults.standard.set(false, forKey: "calm.onboardingCompleted")
-        _session = StateObject(wrappedValue: FirebaseSession())
+
+        #if DEBUG
+        // 테스트 실행 시 이전 Firebase 로그인 세션 제거
+        try? Auth.auth().signOut()
+
+        // 온보딩 완료 상태도 초기화
+        UserDefaults.standard.set(
+            false,
+            forKey: "calm.onboardingCompleted"
+        )
+        #endif
+
+        _session = StateObject(
+            wrappedValue: FirebaseSession()
+        )
     }
-    @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
+
+    @AppStorage("calm.onboardingCompleted")
+    private var onboardingCompleted = false
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if session.userID != nil && onboardingCompleted { HomeView().id(session.userID) }
-                else { LaunchGate() }
+                if session.userID != nil && onboardingCompleted {
+                    HomeView()
+                        .id(session.userID)
+                } else {
+                    LaunchGate()
+                }
             }
-                .tint(Theme.accent)
-                .preferredColorScheme(.light)
+            .tint(Theme.accent)
+            .preferredColorScheme(.light)
+        }
     }
-}
-
 }
 
 private struct LaunchGate: View {
@@ -154,6 +173,8 @@ struct WelcomeView: View {
                     Text("시작하기").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 56).background(Theme.accent, in: Capsule())
                 }.buttonStyle(.plain)
+                HStack(spacing: 4) { accountPrompt }
+                    .font(AppTypography.font(13))
                 Button("천천히 둘러보기") { browsing = true }.font(AppTypography.font(13)).foregroundStyle(Color.secondary).frame(minHeight: 48)
             }.padding(.horizontal, 24).padding(.bottom, 16).frame(maxWidth: 402).frame(maxWidth: .infinity).frame(minHeight: geometry.size.height)
                 .background(Theme.background.ignoresSafeArea())
@@ -364,14 +385,11 @@ struct AuthView: View {
                 #endif
                 #if DEBUG && targetEnvironment(simulator)
                 stage = "Express profile"
-                let data = try await APIService.shared.getMyProfile()
-                let saved = try OnboardingPreferences.decodeResponse(data)
+                _ = try await APIService.shared.getMyProfile()
                 print("[Login] Express profile succeeded")
-                onboardingCompleted = saved.onboardingCompleted == true
-                if !onboardingCompleted { showAgreement = true }
-                #else
-                onboardingCompleted = true
                 #endif
+                // This local flag opens Home; it does not mark server onboarding complete.
+                onboardingCompleted = true
             }
             password = ""
         } catch {
