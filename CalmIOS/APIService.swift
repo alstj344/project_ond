@@ -66,24 +66,45 @@ struct ProgramPage: Decodable {
     let nextCursor: String?
 }
 struct RemoteFacility: Decodable, Identifiable, Hashable {
-    struct Transit: Decodable, Hashable { let name: String; let mode: String }
-    let id: String
-    let name: String
-    let address: String
-    let addressDetail: String
-    let category: String
-    let facilityType: String
-    let district: String
-    let latitude: Double?
-    let longitude: Double?
-    let phone: String
-    let sourceSnapshot: String
-    let distanceKm: Double?
-    let nearbyTransit: [Transit]
-    var location: ProgramLocation? {
-        guard let latitude, let longitude, (33...39).contains(latitude), (124...132).contains(longitude) else { return nil }
-        return ProgramLocation(latitude: latitude, longitude: longitude)
-    }
+    struct Transit: Decodable, Hashable {
+        let name: String
+        let type: String
+        let distanceMeters: Int?
+        let distanceType: String?
+        let latitude: Double?
+        let longitude: Double?
+        let walkingTimeMinutes: Int?
+    }
+
+    let id: String
+    let name: String
+    let address: String
+    let addressDetail: String
+    let category: String
+    let facilityType: String
+    let district: String
+    let latitude: Double?
+    let longitude: Double?
+    let phone: String
+    let sourceSnapshot: String
+    let distanceKm: Double?
+    let nearbyTransit: [Transit]
+
+    var location: ProgramLocation? {
+        guard
+            let latitude,
+            let longitude,
+            (33...39).contains(latitude),
+            (124...132).contains(longitude)
+        else {
+            return nil
+        }
+
+        return ProgramLocation(
+            latitude: latitude,
+            longitude: longitude
+        )
+    }
 }
 struct FacilityPage: Decodable {
     let success: Bool
