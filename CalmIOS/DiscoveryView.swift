@@ -158,7 +158,42 @@ private struct ProgramDiscoveryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                VStack(spacing: 16) {
+                searchHeader
+                if hasPlaceQuery {
+                    DiscoveryMapResults(search: placeSearch, retry: { searchRevision += 1 }, select: { searchFocused = false }, usePlace: { place in
+                        selectedArea = place.title
+                        query.center = ProgramLocation(latitude: place.coordinate.latitude, longitude: place.coordinate.longitude)
+                        query.filter = .nearby
+                        query.sort = .distance
+                        query.radius = 3
+                        query.text = ""
+                        searchFocused = false
+                    })
+                } else {
+                programList
+                }
+            }
+            .frame(maxWidth: 600).frame(maxWidth: .infinity)
+            .background(Theme.background.ignoresSafeArea())
+            .navigationTitle("탐색").navigationBarTitleDisplayMode(.inline)
+            .task { await loadPrograms(reset: true) }
+            .onChange(of: query.text) { _ in placeSearch.cancel() }
+            .task(id: "\(query.text)|\(searchRevision)") {
+                let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { placeSearch.reset(); return }
+                do { try await Task.sleep(nanoseconds: 450_000_000) } catch { return }
+                await placeSearch.search(text)
+            }
+            .onDisappear { placeSearch.cancel() }
+            .navigationDestination(for: RemoteProgram.self) { RemoteProgramDetailView(program: $0) }
+        }
+    }
+
+    private var programCategories: [String] { Array(Set(programs.map(\.category))).sorted() }
+    private var programVenues: [String] { Array(Set(programs.map(\.facilityId))).filter { !$0.isEmpty }.sorted() }
+
+    private var searchHeader: some View {
+        VStack(spacing: 16) {
                     HStack(spacing: 8) {
                         SafeAssetImage(name: "SearchIcon", fallback: "magnifyingglass").frame(width: 18, height: 18)
                         TextField("원하시는 지역을 검색해보세요.", text: $query.text)
@@ -210,13 +245,13 @@ private struct ProgramDiscoveryView: View {
                     if query.filter == .category {
                         Picker("종목", selection: $query.category) {
                             Text("전체").tag("전체")
-                            ForEach(Array(Set(programs.map(\.category))).sorted(), id: \.self) { Text($0).tag($0) }
+                            ForEach(programCategories, id: \.self) { Text($0).tag($0) }
                         }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if query.filter == .venue {
                         Picker("기관", selection: $query.venue) {
                             Text("전체").tag("전체")
-                            ForEach(Array(Set(programs.map(\.facilityId))).filter { !$0.isEmpty }.sorted(), id: \.self) { Text($0).tag($0) }
+                            ForEach(programVenues, id: \.self) { Text($0).tag($0) }
                         }.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if query.filter == .group {
@@ -227,18 +262,10 @@ private struct ProgramDiscoveryView: View {
                     }
                     }
                 }.padding(24).background(.white)
-                if hasPlaceQuery {
-                    DiscoveryMapResults(search: placeSearch, retry: { searchRevision += 1 }, select: { searchFocused = false }, usePlace: { place in
-                        selectedArea = place.title
-                        query.center = ProgramLocation(latitude: place.coordinate.latitude, longitude: place.coordinate.longitude)
-                        query.filter = .nearby
-                        query.sort = .distance
-                        query.radius = 3
-                        query.text = ""
-                        searchFocused = false
-                    })
-                } else {
-                ScrollView {
+    }
+
+    private var programList: some View {
+        ScrollView {
                     VStack(spacing: 12) {
                         HStack {
                             Text(query.center == nil ? "추천 운동" : "주변 프로그램").font(AppTypography.font(16, weight: .bold))
@@ -282,22 +309,6 @@ private struct ProgramDiscoveryView: View {
                         }
                     }.padding(24)
                 }.refreshable { await loadPrograms(reset: true) }
-                }
-            }
-            .frame(maxWidth: 600).frame(maxWidth: .infinity)
-            .background(Theme.background.ignoresSafeArea())
-            .navigationTitle("탐색").navigationBarTitleDisplayMode(.inline)
-            .task { await loadPrograms(reset: true) }
-            .onChange(of: query.text) { _ in placeSearch.cancel() }
-            .task(id: "\(query.text)|\(searchRevision)") {
-                let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { placeSearch.reset(); return }
-                do { try await Task.sleep(nanoseconds: 450_000_000) } catch { return }
-                await placeSearch.search(text)
-            }
-            .onDisappear { placeSearch.cancel() }
-            .navigationDestination(for: RemoteProgram.self) { RemoteProgramDetailView(program: $0) }
-        }
     }
 
     @MainActor private func loadPrograms(reset: Bool) async {
