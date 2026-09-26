@@ -2,7 +2,6 @@ import SwiftUI
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
-
 enum SignInNotice {
     static func message(for error: Error, createdAccount: Bool) -> String {
         if createdAccount {
@@ -35,22 +34,18 @@ enum SignInNotice {
         return "연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요."
     }
 }
-
 final class FirebaseSession: ObservableObject {
     @Published var userID: String?
     private var listener: AuthStateDidChangeListenerHandle?
-
     init() {
         userID = Auth.auth().currentUser?.uid
         listener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             self?.userID = user?.uid
         }
     }
-
     deinit {
         if let listener { Auth.auth().removeStateDidChangeListener(listener) }
     }
-
     static func ensureUserDocument(_ user: User) async throws {
         let database = Firestore.firestore(database: "ond-db")
         let document = database.collection("users").document(user.uid)
@@ -74,34 +69,27 @@ final class FirebaseSession: ObservableObject {
         }
     }
 }
-
 @main
 struct CalmApp: App {
     @StateObject private var session: FirebaseSession
-
     init() {
         FirebaseApp.configure()
         AppTypography.register()
-
         #if DEBUG
         // 테스트 실행 시 이전 Firebase 로그인 세션 제거
         try? Auth.auth().signOut()
-
         // 온보딩 완료 상태도 초기화
         UserDefaults.standard.set(
             false,
             forKey: "calm.onboardingCompleted"
         )
         #endif
-
         _session = StateObject(
             wrappedValue: FirebaseSession()
         )
     }
-
     @AppStorage("calm.onboardingCompleted")
     private var onboardingCompleted = false
-
     var body: some Scene {
         WindowGroup {
             Group {
@@ -117,7 +105,6 @@ struct CalmApp: App {
         }
     }
 }
-
 private struct LaunchGate: View {
     @State private var finished = false
     var body: some View {
@@ -128,7 +115,6 @@ private struct LaunchGate: View {
             }
     }
 }
-
 private struct SplashView: View {
     var body: some View {
         Image("OnDBrand").resizable().scaledToFit().frame(width: 156, height: 98)
@@ -136,7 +122,6 @@ private struct SplashView: View {
             .background(Theme.background).ignoresSafeArea()
     }
 }
-
 enum Theme {
     static let background = Color(red: 248 / 255, green: 247 / 255, blue: 245 / 255)
     static let surface = Color(red: 244 / 255, green: 241 / 255, blue: 236 / 255)
@@ -145,18 +130,15 @@ enum Theme {
     static let ink = Color(red: 28 / 255, green: 28 / 255, blue: 24 / 255)
     static let muted = Color(red: 177 / 255, green: 185 / 255, blue: 180 / 255)
 }
-
 enum AuthMode: String, Identifiable {
     case signup, login
     var id: Self { self }
     var title: String { self == .signup ? "회원가입" : "로그인" }
 }
-
 struct WelcomeView: View {
     @State private var authMode: AuthMode?
     @State private var browsing = false
     @ScaledMetric(relativeTo: .body) private var buttonHeight = 52.0
-
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
@@ -187,7 +169,6 @@ struct WelcomeView: View {
             if mode == .signup { SignupView() } else { AuthView(mode: mode) }
         }
     }
-
     private var accountPrompt: some View {
         Group {
             Text("이미 계정이 있나요?")
@@ -197,7 +178,6 @@ struct WelcomeView: View {
             }
         }
     }
-
     private var illustration: some View {
         ZStack {
             Circle()
@@ -220,7 +200,6 @@ struct WelcomeView: View {
         .accessibilityHidden(true)
     }
 }
-
 private struct SignupView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showAgreement = false
@@ -261,7 +240,6 @@ private struct SignupView: View {
         }
     }
 }
-
 struct AuthView: View {
     let mode: AuthMode
     @Environment(\.dismiss) private var dismiss
@@ -274,13 +252,11 @@ struct AuthView: View {
     @State private var errorMessage = ""
     @State private var showAgreement = false
     @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
-
     private var validInput: Bool {
         let value = email.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.contains("@") && !value.contains(where: \.isWhitespace)
             && password.count >= (mode == .signup ? 8 : 1) && !submitting
     }
-
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
@@ -295,7 +271,6 @@ struct AuthView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4).padding(.top, 32)
-
                         VStack(spacing: 12) {
                             TextField("이메일 입력", text: $email)
                                 .textContentType(.emailAddress).keyboardType(.emailAddress)
@@ -315,7 +290,6 @@ struct AuthView: View {
                         }
                         .font(AppTypography.font(14)).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .padding(.horizontal, 4).padding(.top, 128)
-
                         Button { Task { await submit() } } label: {
                             Text(submitting ? "처리 중…" : mode.title).font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                                 .frame(maxWidth: .infinity, minHeight: 56)
@@ -354,7 +328,6 @@ struct AuthView: View {
             }
         }
     }
-
     @MainActor private func submit() async {
         guard validInput else { return }
         submitting = true
@@ -402,13 +375,11 @@ struct AuthView: View {
         }
     }
 }
-
 struct WelcomeView_Previews: PreviewProvider {
     static var previews: some View {
         WelcomeView().tint(Theme.accent).preferredColorScheme(.light)
     }
 }
-
 enum AgreementTerm: String, CaseIterable, Identifiable {
     case service, privacy, personalization, notifications
     var id: Self { self }
@@ -423,7 +394,6 @@ enum AgreementTerm: String, CaseIterable, Identifiable {
     }
     var label: String { title + (required ? "(필수)" : "(선택)") }
 }
-
 struct AgreementSelection {
     private(set) var accepted: Set<AgreementTerm> = []
     var allAccepted: Bool { accepted.count == AgreementTerm.allCases.count }
@@ -437,7 +407,6 @@ struct AgreementSelection {
         accepted = value ? Set(AgreementTerm.allCases) : []
     }
 }
-
 struct AgreementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection = AgreementSelection()
@@ -446,7 +415,6 @@ struct AgreementView: View {
     @ScaledMetric(relativeTo: .title2) private var headingSize = 24.0
     @ScaledMetric(relativeTo: .footnote) private var rowFontSize = 13.0
     private let secondary = Color(red: 113 / 255, green: 121 / 255, blue: 115 / 255)
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -464,7 +432,6 @@ struct AgreementView: View {
                     }
                     .padding(.top, 32)
                     .padding(.bottom, 48)
-
                     Toggle(isOn: Binding(
                         get: { selection.allAccepted },
                         set: { selection.setAll($0) }
@@ -481,7 +448,6 @@ struct AgreementView: View {
                     }
                     .toggleStyle(AgreementToggleStyle())
                     Divider().padding(.vertical, 24)
-
                     VStack(spacing: 0) {
                         ForEach(AgreementTerm.allCases) { term in
                             HStack(spacing: 0) {
@@ -555,7 +521,6 @@ struct AgreementView: View {
         }
     }
 }
-
 private struct AgreementToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button { configuration.isOn.toggle() } label: {
@@ -583,11 +548,9 @@ private struct AgreementToggleStyle: ToggleStyle {
         .accessibilityAddTraits(configuration.isOn ? .isSelected : [])
     }
 }
-
 private struct AgreementDetailView: View {
     let term: AgreementTerm
     @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -615,7 +578,6 @@ private struct AgreementDetailView: View {
         }
     }
 }
-
 struct AgreementView_Previews: PreviewProvider {
     static var previews: some View {
         AgreementView().tint(Theme.accent).preferredColorScheme(.light)

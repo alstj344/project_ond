@@ -498,38 +498,191 @@ private struct FacilityDiscoveryView: View {
 
 private struct FacilityDetailView: View {
     let facility: RemoteFacility
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(facility.name).font(AppTypography.font(24, weight: .bold))
-                Text(facility.facilityType).foregroundStyle(Theme.accent)
-                Label(facility.address, systemImage: "mappin.and.ellipse")
-                if !facility.addressDetail.isEmpty { Text(facility.addressDetail).foregroundStyle(.secondary) }
-                if !facility.phone.isEmpty { Label(facility.phone, systemImage: "phone") }
-                if let location = facility.location {
-                    Button {
-                        let item = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)))
-                        item.name = facility.name
-                        item.openInMaps(launchOptions: nil)
-                    } label: { Label("지도 앱에서 보기", systemImage: "map") }
+                facilityHeader
+                facilityInformation
+                mapButton
+                transitSection
+            }
+            .padding(24)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .navigationTitle("기관 상세")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: - 기관 기본 정보
+
+    private var facilityHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(facility.name)
+                .font(AppTypography.font(24, weight: .bold))
+
+            Text(facility.facilityType)
+                .foregroundStyle(Theme.accent)
+        }
+    }
+
+    // MARK: - 주소 / 전화번호
+
+    @ViewBuilder
+    private var facilityInformation: some View {
+        Label(
+            facility.address,
+            systemImage: "mappin.and.ellipse"
+        )
+
+        if !facility.addressDetail.isEmpty {
+            Text(facility.addressDetail)
+                .foregroundStyle(.secondary)
+        }
+
+        if !facility.phone.isEmpty {
+            Label(
+                facility.phone,
+                systemImage: "phone"
+            )
+        }
+    }
+
+    // MARK: - 지도
+
+    @ViewBuilder
+    private var mapButton: some View {
+        if let location = facility.location {
+            Button {
+                openMap(location)
+            } label: {
+                Label(
+                    "지도 앱에서 보기",
+                    systemImage: "map"
+                )
+            }
+        }
+    }
+
+    private func openMap(_ location: ProgramLocation) {
+        let coordinate = CLLocationCoordinate2D(
+            latitude: location.latitude,
+            longitude: location.longitude
+        )
+
+        let placemark = MKPlacemark(
+            coordinate: coordinate
+        )
+
+        let item = MKMapItem(
+            placemark: placemark
+        )
+
+        item.name = facility.name
+
+        item.openInMaps(
+            launchOptions: nil
+        )
+    }
+
+    // MARK: - 주변 대중교통
+
+    private var transitSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+
+            Text("주변 대중교통")
+                .font(.headline)
+
+            if facility.nearbyTransit.isEmpty {
+                Text("등록된 교통정보가 없어요.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(
+                    Array(facility.nearbyTransit.enumerated()),
+                    id: \.offset
+                ) { _, stop in
+                    transitRow(stop)
                 }
-                Divider()
-                Text("주변 대중교통").font(.headline)
-                if facility.nearbyTransit.isEmpty { Text("등록된 교통정보가 없어요.").foregroundStyle(.secondary) }
-                ForEach(Array(facility.nearbyTransit.enumerated()), id: \.offset) { _, stop in
-                    Label("\(stop.name) · \(stop.mode)", systemImage: stop.mode.contains("버스") ? "bus" : "tram")
+            }
+        }
+    }
+
+    // MARK: - 대중교통 한 줄
+
+    private func transitRow(
+        _ stop: RemoteFacility.Transit
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: transitIcon(for: stop.type))
+                .frame(width: 24)
+                .foregroundStyle(Theme.accent)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(stop.name)
+                    .font(.body.weight(.medium))
+
+                Text(stop.type)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let distance = stop.distanceMeters {
+                    Text(distanceDescription(
+                        distance: distance,
+                        distanceType: stop.distanceType
+                    ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                Divider()
-                Text("2026년 7월 기준 시설 정보입니다. 현재 운영 여부와 이용 요금은 기관에 확인해주세요.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                Text("아직 예약 가능한 프로그램이 등록되지 않았어요.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity, alignment: .leading)
-        }.navigationTitle("기관 정보").navigationBarTitleDisplayMode(.inline)
-            .background(Theme.background.ignoresSafeArea())
+
+                if let walkingTime = stop.walkingTimeMinutes {
+                    Text("도보 약 \(walkingTime)분")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+        }
+    }
+
+    private func transitIcon(for type: String) -> String {
+        if type.contains("버스") {
+            return "bus.fill"
+        }
+
+        if type.contains("지하철") ||
+            type.contains("전철") ||
+            type.contains("철도") {
+            return "tram.fill"
+        }
+
+        return "location.fill"
+    }
+
+    private func distanceDescription(
+        distance: Int,
+        distanceType: String?
+    ) -> String {
+        let distanceText: String
+
+        if distance >= 1000 {
+            let kilometers = Double(distance) / 1000.0
+            distanceText = String(
+                format: "%.1fkm",
+                kilometers
+            )
+        } else {
+            distanceText = "\(distance)m"
+        }
+
+        if distanceType == "straight" {
+            return "\(distanceText) · 직선거리 기준"
+        }
+
+        return distanceText
     }
 }
-
 private struct DiscoveryPlace: Identifiable {
     let id = UUID()
     let item: MKMapItem

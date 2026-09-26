@@ -1,7 +1,6 @@
 import SwiftUI
 import CoreText
 import UIKit
-
 struct SafeAssetImage: View {
     let name: String
     let fallback: String
@@ -10,7 +9,6 @@ struct SafeAssetImage: View {
         else { Image(systemName: fallback).resizable().scaledToFit() }
     }
 }
-
 enum AppTypography {
     static func register() {
         guard let url = Bundle.main.url(forResource: "Inter", withExtension: "ttf") else { return }
@@ -20,7 +18,6 @@ enum AppTypography {
         .custom("Inter-Regular", size: size, relativeTo: style).weight(weight)
     }
 }
-
 enum CancellationReason: String, CaseIterable, Identifiable {
     case schedule = "개인 일정이 생겼어요."
     case health = "건강상의 이유로 참여가 어려워요."
@@ -28,14 +25,12 @@ enum CancellationReason: String, CaseIterable, Identifiable {
     case other = "기타"
     var id: String { rawValue }
 }
-
 extension DiscoveryProgram {
     static let yoga = DiscoveryProgram(id: "small-group-yoga", venue: "마음숲 웰니스 스페이스 3층",
         title: "초보자 소그룹 릴랙스 요가", date: "8월 31일(월)", day: 31, time: "19:00-19:50",
         category: "요가", minutes: 5, kilometers: 0.4, smallGroup: true, reviews: 2, price: 0)
     var isYoga: Bool { category == "요가" }
 }
-
 struct FlowAction: View {
     let title: String
     var secondary = false
@@ -49,7 +44,6 @@ struct FlowAction: View {
         }.buttonStyle(.plain)
     }
 }
-
 struct ProgramLibraryView: View {
     @ObservedObject var store: WellnessStore
     @State private var programs: [RemoteProgram] = []
@@ -97,7 +91,6 @@ struct ProgramLibraryView: View {
                 .task { if !loaded { await load(reset: true) } }
         }
     }
-
     @MainActor private func load(reset: Bool) async {
         guard !loading else { return }
         loading = true
@@ -123,7 +116,6 @@ struct ProgramLibraryView: View {
         #endif
     }
 }
-
 private struct RemoteProgramImage: View {
     let url: String?
     var body: some View {
@@ -137,7 +129,6 @@ private struct RemoteProgramImage: View {
         }.accessibilityHidden(true)
     }
 }
-
 struct RemoteProgramDetailView: View {
     let program: RemoteProgram
     var body: some View {
@@ -169,7 +160,6 @@ struct RemoteProgramDetailView: View {
             }
     }
 }
-
 struct ReviewBody: View {
     let rating: Int
     let text: String
@@ -196,7 +186,6 @@ struct ReviewBody: View {
             .background(Theme.background, in: RoundedRectangle(cornerRadius: 16))
     }
 }
-
 struct ProgramDetailView: View {
     let program: DiscoveryProgram
     @ObservedObject var store: WellnessStore
@@ -215,7 +204,6 @@ struct ProgramDetailView: View {
         }
     }
     private let sampleReview = "요가를 처음 해봐서 동작을 못 따라갈까 걱정했는데, 어려운 동작은 하지 않아도 된다고 먼저 안내해 주셔서 마음이 편했어요. 사람도 많지 않고 다른 참여자와 이야기할 일이 거의 없어서 제 동작에만 집중할 수 있었어요."
-
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -312,7 +300,6 @@ struct ProgramDetailView: View {
             ReservationSuccessView(bookingID: program.id, store: store)
         }
     }
-
     private var summary: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
@@ -338,7 +325,6 @@ struct ProgramDetailView: View {
             }
         }
     }
-
     private var reviewSection: some View {
         VStack(spacing: 24) {
             HStack(spacing: 6) {
@@ -368,7 +354,6 @@ struct ProgramDetailView: View {
             }.padding(.horizontal, 8)
         }
     }
-
     @ViewBuilder private var sampleReviews: some View {
         if isReferenceProgram {
             ForEach(0..<2) { index in
@@ -388,7 +373,6 @@ struct ProgramDetailView: View {
             }
         }
     }
-
     private var reservationAction: some View {
         Group {
             if active {
@@ -402,7 +386,6 @@ struct ProgramDetailView: View {
             }
         }.buttonStyle(.plain)
     }
-
     private func reservationLabel(_ text: String) -> some View {
         Text(text).font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 56).background(Theme.accent, in: Capsule())
@@ -456,7 +439,6 @@ struct ProgramDetailView: View {
             .background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
     }
 }
-
 struct ReservationSuccessView: View {
     let bookingID: String
     @ObservedObject var store: WellnessStore
@@ -488,7 +470,6 @@ struct ReservationSuccessView: View {
             }
     }
 }
-
 struct SuccessIcon: View {
     var body: some View {
         Image("SuccessMark").resizable().scaledToFit().frame(width: 48, height: 48)
@@ -496,7 +477,6 @@ struct SuccessIcon: View {
             .accessibilityHidden(true)
     }
 }
-
 struct ReservationSummaryView: View {
     let bookingID: String
     @ObservedObject var store: WellnessStore
@@ -579,7 +559,6 @@ struct ReservationSummaryView: View {
         }.frame(maxWidth: .infinity, minHeight: 60)
     }
 }
-
 struct CancelReservationView: View {
     let booking: WellnessBooking
     let onConfirm: (CancellationReason) -> Void
@@ -619,7 +598,6 @@ struct CancelReservationView: View {
         }.presentationDetents([.large]).presentationDragIndicator(.visible)
     }
 }
-
 struct CancellationSuccessView: View {
     let booking: WellnessBooking
     @Environment(\.returnHome) private var returnHome
@@ -643,7 +621,6 @@ struct CancellationSuccessView: View {
             .safeAreaInset(edge: .bottom) { FlowAction(title: "확인", action: returnHome).padding(24).background(Theme.background) }
     }
 }
-
 struct MyReviewsView: View {
     @ObservedObject var store: WellnessStore
     @State private var written: Bool
