@@ -122,7 +122,6 @@ final class ProfileStore: ObservableObject {
     }
     @MainActor func refresh() async {
         guard ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { return }
-        #if DEBUG && targetEnvironment(simulator)
         do {
             struct Response: Decodable {
                 struct User: Decodable {
@@ -143,7 +142,6 @@ final class ProfileStore: ObservableObject {
             medicalLoaded = true
             loadError = nil
         } catch { loadError = "개인정보를 불러오지 못했어요. 다시 시도해 주세요." }
-        #endif
     }
 
     @MainActor func registerMedicalExample() async throws {
@@ -163,13 +161,9 @@ final class ProfileStore: ObservableObject {
         var clean = draft
         clean.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         clean.email = Auth.auth().currentUser?.email ?? ""
-        #if DEBUG && targetEnvironment(simulator)
         try await APIService.shared.savePersonalDetails(name: clean.name, phone: clean.phone)
         guard ownerID == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
         details = clean
-        #else
-        throw APIError.serverUnavailable
-        #endif
     }
 }
 
@@ -841,7 +835,6 @@ struct ExerciseConditionsView: View {
         guard !busy else { return }
         busy = true
         defer { busy = false }
-        #if DEBUG && targetEnvironment(simulator)
         do {
             let uid = Auth.auth().currentUser?.uid
             let data = try await APIService.shared.getMyProfile()
@@ -859,16 +852,12 @@ struct ExerciseConditionsView: View {
         } catch {
             notice = "운동 조건을 불러오지 못했어요. 연결을 확인한 뒤 다시 불러와 주세요."
         }
-        #else
-        notice = "현재 환경에서는 저장 서버에 연결할 수 없어요."
-        #endif
     }
 
     @MainActor private func save() async {
         guard loaded, !busy, ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { return }
         busy = true
         defer { busy = false }
-        #if DEBUG && targetEnvironment(simulator)
         do {
             let payload = ExerciseConditionsPayload(
                 preferredExercises: draftTypes.compactMap { ExerciseConditionsPayload.typeCodes[$0] }.sorted(),
@@ -884,7 +873,6 @@ struct ExerciseConditionsView: View {
         } catch {
             notice = "저장하지 못했어요. 입력한 내용은 유지되니 다시 시도해 주세요."
         }
-        #endif
     }
     private func section<Content: View>(_ title: String, _ subtitle: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {

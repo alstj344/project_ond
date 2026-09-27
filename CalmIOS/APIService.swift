@@ -8,6 +8,34 @@
 import Foundation
 import FirebaseAuth
 
+// MARK: - Endpoint Configuration
+
+enum APIEndpoint {
+    enum ConfigurationError: Error { case missingOrInvalidURL }
+
+    static func resolve(configured: String?, fallback: String?, path: String) throws -> URL {
+        let value = configured?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let raw = value.isEmpty ? (fallback ?? "") : value
+        guard var parts = URLComponents(string: raw),
+              let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/",
+              path.hasPrefix("/api/"), !path.contains("?"), !path.contains("#"),
+              !path.contains(".."), !path.contains("%") else {
+            throw ConfigurationError.missingOrInvalidURL
+        }
+        let loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].contains(host.lowercased())
+        guard (parts.scheme == "https" && !loopback) ||
+                (fallback != nil && loopback && parts.scheme == "http") else {
+            throw ConfigurationError.missingOrInvalidURL
+        }
+        parts.path = path
+        guard let url = parts.url else { throw ConfigurationError.missingOrInvalidURL }
+        return url
+    }
+}
+
 // MARK: - Program
 
 struct RemoteProgram: Decodable, Identifiable, Hashable {
@@ -229,8 +257,6 @@ struct FacilityPage: Decodable {
 }
 
 
-#if DEBUG && targetEnvironment(simulator)
-
 private final class ProfileRedirectBlocker: NSObject, URLSessionTaskDelegate {
 
     func urlSession(
@@ -251,7 +277,15 @@ final class APIService {
 
     static let shared = APIService()
 
-    private let baseURL = "http://localhost:3000"
+    private func endpoint(_ path: String) throws -> URL {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "ONDAPIBaseURL") as? String
+        #if DEBUG && targetEnvironment(simulator)
+        let fallback: String? = "http://localhost:3000"
+        #else
+        let fallback: String? = nil
+        #endif
+        return try APIEndpoint.resolve(configured: configured, fallback: fallback, path: path)
+    }
 
     private init() {}
 
@@ -364,11 +398,7 @@ final class APIService {
             throw APIError.notLoggedIn
         }
 
-        guard let url = URL(
-            string: baseURL + path
-        ) else {
-            throw APIError.invalidURL
-        }
+        let url = try endpoint(path)
 
         let session = URLSession(
             configuration: .ephemeral,
@@ -462,9 +492,9 @@ final class APIService {
         page: Int
     ) async throws -> FacilityPage {
 
-        var components = URLComponents(
-            string: "\(baseURL)/api/facilities"
-        )!
+        guard var components = URLComponents(url: try endpoint("/api/facilities"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL
+        }
 
         var items = [
             URLQueryItem(
@@ -554,9 +584,9 @@ final class APIService {
         after: String? = nil
     ) async throws -> ProgramPage {
 
-        var components = URLComponents(
-            string: "\(baseURL)/api/programs"
-        )!
+        guard var components = URLComponents(url: try endpoint("/api/programs"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL
+        }
 
         if let after {
             components.queryItems = [
@@ -627,7 +657,7 @@ final class APIService {
             throw APIError.invalidURL
         }
 
-        var components = URLComponents(string: "\(baseURL)/api/programs/\(programId)/reviews")
+        var components = URLComponents(url: try endpoint("/api/programs/\(programId)/reviews"), resolvingAgainstBaseURL: false)
         if let after { components?.queryItems = [URLQueryItem(name: "after", value: after)] }
         guard let url = components?.url else {
             throw APIError.invalidURL
@@ -768,11 +798,7 @@ final class APIService {
             throw APIError.notLoggedIn
         }
 
-        guard let url = URL(
-            string: "\(baseURL)/api/users/me"
-        ) else {
-            throw APIError.invalidURL
-        }
+        let url = try endpoint("/api/users/me")
 
         let session = URLSession(
             configuration: .ephemeral,
@@ -865,86 +891,6 @@ final class APIService {
         throw APIError.notLoggedIn
     }
 }
-
-
-#else
-
-// MARK: - Non-Simulator Fallback
-
-final class APIService {
-
-    static let shared = APIService()
-
-    private init() {}
-
-    func createReservation(
-        programId: String
-    ) async throws -> RemoteReservation {
-        throw APIError.serverUnavailable
-    }
-
-    func getMyReservations() async throws -> [RemoteReservation] {
-        throw APIError.serverUnavailable
-    }
-
-    func cancelReservation(
-        programId: String,
-        reason: String? = nil
-    ) async throws {
-        throw APIError.serverUnavailable
-    }
-
-    func getFacilities(
-        search: String,
-        category: String,
-        center: ProgramLocation?,
-        radius: Double,
-        page: Int
-    ) async throws -> FacilityPage {
-        throw APIError.serverUnavailable
-    }
-
-    func getPrograms(
-        after: String? = nil
-    ) async throws -> ProgramPage {
-        throw APIError.serverUnavailable
-    }
-
-    func getProgramReviews(
-        programId: String, after: String? = nil
-    ) async throws -> ReviewListResponse {
-        throw APIError.serverUnavailable
-    }
-
-    func getMyProfile() async throws -> Data {
-        throw APIError.serverUnavailable
-    }
-
-    func saveOnboarding(
-        _ profile: OnboardingProfile
-    ) async throws {
-        throw APIError.serverUnavailable
-    }
-
-    func saveConditions(
-        _ conditions: ExerciseConditionsPayload
-    ) async throws {
-        throw APIError.serverUnavailable
-    }
-
-    func savePersonalDetails(
-        name: String,
-        phone: String
-    ) async throws {
-        throw APIError.serverUnavailable
-    }
-
-    func registerMedicalTestData() async throws {
-        throw APIError.serverUnavailable
-    }
-}
-
-#endif
 
 
 // MARK: - API Error

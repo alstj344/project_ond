@@ -321,7 +321,6 @@ private struct ProgramDiscoveryView: View {
         loading = true
         loadError = nil
         defer { loading = false }
-        #if DEBUG && targetEnvironment(simulator)
         do {
             if reset {
                 preferences = nil
@@ -342,9 +341,6 @@ private struct ProgramDiscoveryView: View {
             nextCursor = page.nextCursor
         } catch is CancellationError {
         } catch { loadError = "프로그램과 운동 조건을 불러오지 못했어요. 다시 시도해 주세요." }
-        #else
-        loadError = "현재 환경에서는 프로그램 서버에 연결할 수 없어요."
-        #endif
     }
 }
 
@@ -515,7 +511,6 @@ private struct FacilityDiscoveryView: View {
         defer { if requestID == token { loading = false } }
         do {
             if debounce { try await Task.sleep(nanoseconds: 350_000_000) }
-            #if DEBUG && targetEnvironment(simulator)
             let response = try await APIService.shared.getFacilities(search: search, category: category, center: center, radius: radius, page: page)
             try Task.checkCancellation()
             guard requestID == token, key == requestKey else { return }
@@ -528,9 +523,6 @@ private struct FacilityDiscoveryView: View {
             nextPage = response.nextPage
             categories = response.categories
             if reset && center == nil { fitMap() }
-            #else
-            throw APIError.serverUnavailable
-            #endif
         } catch is CancellationError {
         } catch {
             guard requestID == token, key == requestKey, !Task.isCancelled else { return }

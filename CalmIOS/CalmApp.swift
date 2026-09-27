@@ -354,9 +354,9 @@ struct AuthView: View {
                 #if DEBUG
                 print("[Login] Firestore profile succeeded")
                 #endif
-                #if DEBUG && targetEnvironment(simulator)
                 stage = "Express profile"
                 _ = try await APIService.shared.getMyProfile()
+                #if DEBUG
                 print("[Login] Express profile succeeded")
                 #endif
                 // This local flag opens Home; it does not mark server onboarding complete.

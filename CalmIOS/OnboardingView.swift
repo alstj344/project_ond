@@ -20,14 +20,12 @@ struct OnboardingView: View {
         }
         .tint(Theme.accent)
         .task {
-            #if DEBUG && targetEnvironment(simulator)
             do {
                 let data = try await APIService.shared.getMyProfile()
                 try OnboardingPreferences.decodeResponse(data).apply(to: &profile)
             } catch {
                 // Keep the editable defaults when there are no saved preferences.
             }
-            #endif
         }
         .sheet(isPresented: $showAddress) { addressEditor }
         .alert("의료진 상담 안내", isPresented: $showConsultation) {
@@ -632,16 +630,12 @@ private struct AnalysisView: View {
         guard !saving else { return }
         saving = true
         defer { saving = false }
-        #if DEBUG && targetEnvironment(simulator)
         do {
             try await APIService.shared.saveOnboarding(profile)
             onboardingCompleted = true
         } catch {
             saveError = "운동 조건을 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요."
         }
-        #else
-        saveError = "현재 환경에서는 저장 서버에 연결할 수 없어요."
-        #endif
     }
 }
 
