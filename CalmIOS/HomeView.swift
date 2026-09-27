@@ -145,7 +145,7 @@ struct HomeView: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 32) {
                             Image("HomeBrand").resizable().scaledToFit().frame(width: 50, height: 31)
                                 .foregroundStyle(Theme.accent).accessibilityLabel("마음걸음")
                             VStack(alignment: .leading, spacing: 0) {
@@ -158,7 +158,7 @@ struct HomeView: View {
                                     Text(profile.name.isEmpty ? "오늘도 운동을 시작해볼까요?" : "\(profile.name)님,\n오늘도 운동을 시작해볼까요?")
                                 }
                             }
-                                .font(AppTypography.font(20, weight: .semibold))
+                                .font(AppTypography.font(24, weight: .bold))
                                 .fixedSize(horizontal: false, vertical: true)
                             if let booking = store.bookings.first(where: { $0.attendance != .checkedOut && !$0.isCancelled }) {
                                 reservationCard(booking)
@@ -273,9 +273,9 @@ struct HomeView: View {
     private var monthlyProgress: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("이번 달 운동").font(.footnote.bold()).foregroundStyle(Theme.accent)
+                Text("이번 달 운동").font(AppTypography.font(16, weight: .bold)).foregroundStyle(Theme.ink)
                 Spacer()
-                Text("\(monthlyCount)회 참여").font(.caption2).foregroundStyle(secondary)
+                Text("\(monthlyCount)회 참여").font(AppTypography.font(10)).foregroundStyle(secondary)
             }
             HStack(spacing: 0) {
                 ForEach(0..<4) { index in
@@ -292,7 +292,7 @@ struct HomeView: View {
                     .foregroundStyle(.white).background(Theme.accent, in: Capsule())
             }
         }
-        .padding(16).background(Theme.surface, in: RoundedRectangle(cornerRadius: 24))
+        .padding(16).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
     }
 
     private var monthlyCount: Int {
@@ -346,7 +346,7 @@ struct HomeView: View {
     private var schedule: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("나의 일정").font(.headline)
+                Text("나의 일정").font(AppTypography.font(16, weight: .bold))
                 Text("9월 \(selectedDay)일").font(.caption2).foregroundStyle(secondary)
             }
             HStack(spacing: 2) {
@@ -380,7 +380,7 @@ struct HomeView: View {
                 }
             }
         }
-        .padding(16).background(Theme.surface, in: RoundedRectangle(cornerRadius: 24))
+        .padding(16).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
     }
 
     private func bookingLabel(_ booking: WellnessBooking) -> some View {

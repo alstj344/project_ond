@@ -1,0 +1,4 @@
+node_modules/
+*-debug.log
+rules.candidate
+ANALYSIS.local.md

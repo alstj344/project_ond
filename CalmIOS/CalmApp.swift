@@ -155,9 +155,7 @@ struct WelcomeView: View {
                     Text("시작하기").font(AppTypography.font(16, weight: .medium)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 56).background(Theme.accent, in: Capsule())
                 }.buttonStyle(.plain)
-                HStack(spacing: 4) { accountPrompt }
-                    .font(AppTypography.font(13))
-                Button("천천히 둘러보기") { browsing = true }.font(AppTypography.font(13)).foregroundStyle(Color.secondary).frame(minHeight: 48)
+                Button("천천히 둘러보기") { browsing = true }.font(AppTypography.font(13)).foregroundStyle(Color.secondary).frame(minHeight: 44)
             }.padding(.horizontal, 24).padding(.bottom, 16).frame(maxWidth: 402).frame(maxWidth: .infinity).frame(minHeight: geometry.size.height)
                 .background(Theme.background.ignoresSafeArea())
             }.background(Theme.background.ignoresSafeArea())
@@ -298,7 +296,7 @@ struct AuthView: View {
                         if mode == .login { HStack(spacing: 4) {
                             Text("아직 계정이 없나요?").foregroundStyle(Theme.muted)
                             Button("회원가입") { showSignup = true }.underline().frame(minHeight: 44)
-                        }.font(AppTypography.font(13)) }
+                        }.font(AppTypography.font(13)).padding(.top, 2) }
                         Spacer(minLength: 36)
                         Image("LoginIllustration").resizable().scaledToFit()
                             .frame(width: 64, height: 40).accessibilityHidden(true)

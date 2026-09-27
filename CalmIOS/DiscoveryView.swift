@@ -137,7 +137,7 @@ private struct ProgramDiscoveryView: View {
             case .venue: return query.venue == "전체" || query.venue == program.facilityId
             case .group: return !query.smallGroupOnly || program.participationType == "SMALL_GROUP"
             case .free: return program.price == 0
-            case .paid: return program.price > 0
+            case .paid: return program.price.map { $0 > 0 } ?? false
             default: return true
             }
         }.sorted { left, right in
@@ -284,7 +284,7 @@ private struct ProgramDiscoveryView: View {
                                     if let date = program.startDate {
                                         Text(date, format: .dateTime.month().day().hour().minute()).font(AppTypography.font(12))
                                     }
-                                    Text(program.price == 0 ? "무료" : "\(program.price.formatted())원").font(AppTypography.font(13))
+                                    Text(program.priceLabel).font(AppTypography.font(13))
                                 }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
                                     .background(.white, in: RoundedRectangle(cornerRadius: 8))
                             }.buttonStyle(.plain)

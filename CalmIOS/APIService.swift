@@ -4,11 +4,20 @@
 //
 //  Created by 이민서 on 9/24/26.
 //
+
 import Foundation
 import FirebaseAuth
+
+// MARK: - Program
+
 struct RemoteProgram: Decodable, Identifiable, Hashable {
     let id: String
-    let title: String
+    let programId: String
+    let programName: String
+    let facilityName: String
+    let bookingAvailable: Bool
+    let bookingUnavailableReason: String?
+    var title: String { programName }
     let description: String
     let exerciseType: String
     let difficulty: String
@@ -17,12 +26,47 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
     let instructorId: String
     let startAt: String
     let endAt: String
-    let price: Int
-    let capacity: Int
-    let reservedCount: Int
+    let price: Int?
+    let capacity: Int?
+    let reservedCount: Int?
     let imageURL: String?
     let latitude: Double?
     let longitude: Double?
+    private enum CodingKeys: String, CodingKey {
+        case bookingAvailable, bookingUnavailableReason
+        case id, programId, programName, title, facilityName, description, exerciseType, difficulty, participationType, facilityId, instructorId, startAt, endAt, price, capacity, reservedCount, imageURL, latitude, longitude
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(String.self, forKey: .id)
+            ?? values.decode(String.self, forKey: .programId)
+        programId = try values.decodeIfPresent(String.self, forKey: .programId) ?? id
+        programName = try values.decodeIfPresent(String.self, forKey: .programName)
+            ?? values.decode(String.self, forKey: .title)
+        facilityName = try values.decodeIfPresent(String.self, forKey: .facilityName) ?? ""
+        bookingAvailable = try values.decodeIfPresent(Bool.self, forKey: .bookingAvailable) ?? false
+        bookingUnavailableReason = try values.decodeIfPresent(String.self, forKey: .bookingUnavailableReason)
+        description = try values.decodeIfPresent(String.self, forKey: .description) ?? ""
+        exerciseType = try values.decodeIfPresent(String.self, forKey: .exerciseType) ?? ""
+        difficulty = try values.decodeIfPresent(String.self, forKey: .difficulty) ?? ""
+        participationType = try values.decodeIfPresent(String.self, forKey: .participationType) ?? ""
+        facilityId = try values.decodeIfPresent(String.self, forKey: .facilityId) ?? ""
+        instructorId = try values.decodeIfPresent(String.self, forKey: .instructorId) ?? ""
+        startAt = try values.decodeIfPresent(String.self, forKey: .startAt) ?? ""
+        endAt = try values.decodeIfPresent(String.self, forKey: .endAt) ?? ""
+        price = try values.decodeIfPresent(Int.self, forKey: .price)
+        capacity = try values.decodeIfPresent(Int.self, forKey: .capacity)
+        reservedCount = try values.decodeIfPresent(Int.self, forKey: .reservedCount)
+        imageURL = try values.decodeIfPresent(String.self, forKey: .imageURL)
+        latitude = try values.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude = try values.decodeIfPresent(Double.self, forKey: .longitude)
+    }
+
+    var priceLabel: String {
+        guard let price else { return "요금 정보 없음" }
+        return price == 0 ? "무료" : "\(price.formatted())원"
+    }
     var location: ProgramLocation? {
         guard let latitude, let longitude,
               (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
@@ -60,9 +104,41 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
         return formatter.date(from: startAt) ?? ISO8601DateFormatter().date(from: startAt)
     }
 }
+
 struct ProgramPage: Decodable {
     let success: Bool
     let programs: [RemoteProgram]
+    let nextCursor: String?
+}
+
+
+// MARK: - Review
+
+struct RemoteReview: Decodable, Identifiable, Hashable {
+    let id: String
+    let content: String
+    let createdAt: String?
+    let facilityName: String
+    let isSample: Bool
+    let programId: String
+    let programName: String
+    let rating: Int
+    let reservationId: String?
+    let updatedAt: String?
+    let userId: String?
+    var date: Date? {
+        guard let createdAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: createdAt) ?? ISO8601DateFormatter().date(from: createdAt)
+    }
+}
+
+struct ReviewListResponse: Decodable {
+    let success: Bool
+    let reviews: [RemoteReview]
+    let reviewCount: Int
+    let averageRating: Double
     let nextCursor: String?
 }
 
@@ -98,9 +174,11 @@ private struct ReservationCreatePayload: Encodable {
     let programId: String
 }
 
+
 // MARK: - Facility
 
 struct RemoteFacility: Decodable, Identifiable, Hashable {
+
     struct Transit: Decodable, Hashable {
         let name: String
         let type: String
@@ -141,6 +219,7 @@ struct RemoteFacility: Decodable, Identifiable, Hashable {
         )
     }
 }
+
 struct FacilityPage: Decodable {
     let success: Bool
     let facilities: [RemoteFacility]
@@ -148,177 +227,759 @@ struct FacilityPage: Decodable {
     let nextPage: Int?
     let categories: [String]
 }
+
+
 #if DEBUG && targetEnvironment(simulator)
+
 private final class ProfileRedirectBlocker: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
         completionHandler(nil)
     }
 }
+
+
+// MARK: - API Service
+
 final class APIService {
+
     static let shared = APIService()
+
     private let baseURL = "http://localhost:3000"
+
     private init() {}
+
+
+    // MARK: Reservation
+
+    func createReservation(
+        programId: String
+    ) async throws -> RemoteReservation {
+
+        guard programId.range(
+            of: "^[A-Za-z0-9_-]{1,128}$",
+            options: .regularExpression
+        ) != nil else {
+            throw APIError.invalidURL
+        }
+
+        let body = try JSONEncoder().encode(
+            ReservationCreatePayload(
+                programId: programId
+            )
+        )
+
+        let data = try await reservationRequest(
+            path: "/api/reservations",
+            method: "POST",
+            body: body
+        )
+
+        let result = try JSONDecoder().decode(
+            ReservationCreateResponse.self,
+            from: data
+        )
+
+        guard
+            result.success,
+            let reservation = result.reservation,
+            reservation.programId == programId,
+            reservation.status == "RESERVED"
+        else {
+            throw APIError.invalidResponse
+        }
+
+        return reservation
+    }
+
+
     func getMyReservations() async throws -> [RemoteReservation] {
-        let data = try await reservationRequest(path: "/api/reservations/me", method: "GET")
-        let result = try JSONDecoder().decode(ReservationListResponse.self, from: data)
-        guard result.success else { throw APIError.invalidResponse }
+
+        let data = try await reservationRequest(
+            path: "/api/reservations/me",
+            method: "GET"
+        )
+
+        let result = try JSONDecoder().decode(
+            ReservationListResponse.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
+        }
+
         return result.reservations
     }
-    func cancelReservation(programId: String) async throws {
-        guard programId.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw APIError.invalidURL }
-        let data = try await reservationRequest(path: "/api/reservations/\(programId)", method: "DELETE")
-        let result = try JSONDecoder().decode(ReservationActionResponse.self, from: data)
-        guard result.success else { throw APIError.invalidResponse }
-    }
-    private func reservationRequest(path: String, method: String) async throws -> Data {
-        guard let user = Auth.auth().currentUser else { throw APIError.notLoggedIn }
-        guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
-        let session = URLSession(configuration: .ephemeral, delegate: ProfileRedirectBlocker(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        for attempt in 0...1 {
-            let token = try await user.getIDToken(forcingRefresh: attempt == 1)
-            var request = URLRequest(url: url)
-            request.httpMethod = method
-            request.timeoutInterval = 15
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await session.data(for: request)
-            guard Auth.auth().currentUser?.uid == user.uid else { throw APIError.notLoggedIn }
-            guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-            if http.statusCode == 401 && attempt == 0 { continue }
-            if http.statusCode == 401 { throw APIError.notLoggedIn }
-            guard http.statusCode == 200 else { throw APIError.serverUnavailable }
-            return data
+
+
+    func cancelReservation(
+        programId: String,
+        reason: String? = nil
+    ) async throws {
+
+        guard programId.range(
+            of: "^[A-Za-z0-9_-]{1,128}$",
+            options: .regularExpression
+        ) != nil else {
+            throw APIError.invalidURL
         }
-        throw APIError.notLoggedIn
-    }
-    func getFacilities(search: String, category: String, center: ProgramLocation?, radius: Double, page: Int) async throws -> FacilityPage {
-        var components = URLComponents(string: "\(baseURL)/api/facilities")!
-        var items = [URLQueryItem(name: "q", value: search), URLQueryItem(name: "category", value: category),
-                     URLQueryItem(name: "page", value: String(page))]
-        if let center {
-            items += [URLQueryItem(name: "lat", value: String(center.latitude)),
-                      URLQueryItem(name: "lon", value: String(center.longitude)),
-                      URLQueryItem(name: "radius", value: String(radius))]
+
+        let body = try reason.map {
+            try JSONEncoder().encode(
+                ["reason": $0]
+            )
         }
-        components.queryItems = items
-        guard let url = components.url else { throw APIError.invalidURL }
-        let session = URLSession(configuration: .ephemeral, delegate: ProfileRedirectBlocker(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw APIError.serverUnavailable }
-        let result = try JSONDecoder().decode(FacilityPage.self, from: data)
-        guard result.success else { throw APIError.invalidResponse }
-        return result
-    }
-    func getPrograms(after: String? = nil) async throws -> ProgramPage {
-        var components = URLComponents(string: "\(baseURL)/api/programs")!
-        if let after { components.queryItems = [URLQueryItem(name: "after", value: after)] }
-        guard let url = components.url else { throw APIError.invalidURL }
-        let session = URLSession(configuration: .ephemeral,
-                                 delegate: ProfileRedirectBlocker(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw APIError.serverUnavailable
+
+        let data = try await reservationRequest(
+            path: "/api/reservations/\(programId)",
+            method: "DELETE",
+            body: body
+        )
+
+        let result = try JSONDecoder().decode(
+            ReservationActionResponse.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
         }
-        let page = try JSONDecoder().decode(ProgramPage.self, from: data)
-        guard page.success else { throw APIError.invalidResponse }
-        return page
     }
-    private struct ProfileResponse: Decodable {
-        struct Profile: Decodable { let id: String }
-        let success: Bool
-        let user: Profile
-    }
-    func getMyProfile() async throws -> Data {
-        try await requestProfile(method: "GET")
-    }
-    func saveOnboarding(_ profile: OnboardingProfile) async throws {
-        let payload = OnboardingPreferences(profile: profile)
-        _ = try await requestProfile(method: "PATCH", body: JSONEncoder().encode(payload))
-    }
-    func saveConditions(_ conditions: ExerciseConditionsPayload) async throws {
-        _ = try await requestProfile(method: "PATCH", body: JSONEncoder().encode(conditions))
-    }
-    func savePersonalDetails(name: String, phone: String) async throws {
-        struct Payload: Encodable { let name: String; let phone: String }
-        _ = try await requestProfile(method: "PATCH", body: JSONEncoder().encode(Payload(name: name, phone: phone)))
-    }
-    func registerMedicalTestData() async throws {
-        _ = try await requestProfile(method: "PATCH", body: JSONEncoder().encode(["registerMedicalTestData": true]))
-    }
-    private func requestProfile(method: String, body: Data? = nil) async throws -> Data {
+
+
+    private func reservationRequest(
+        path: String,
+        method: String,
+        body: Data? = nil
+    ) async throws -> Data {
+
         guard let user = Auth.auth().currentUser else {
             throw APIError.notLoggedIn
         }
+
+        guard let url = URL(
+            string: baseURL + path
+        ) else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        for attempt in 0...1 {
+
+            let token = try await user.getIDToken(
+                forcingRefresh: attempt == 1
+            )
+
+            var request = URLRequest(url: url)
+
+            request.httpMethod = method
+            request.httpBody = body
+
+            request.setValue(
+                "application/json",
+                forHTTPHeaderField: "Accept"
+            )
+
+            if body != nil {
+                request.setValue(
+                    "application/json",
+                    forHTTPHeaderField: "Content-Type"
+                )
+            }
+
+            request.timeoutInterval = 15
+
+            request.setValue(
+                "Bearer \(token)",
+                forHTTPHeaderField: "Authorization"
+            )
+
+            let (data, response) = try await session.data(
+                for: request
+            )
+
+            guard Auth.auth().currentUser?.uid == user.uid else {
+                throw APIError.notLoggedIn
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                throw APIError.invalidResponse
+            }
+
+            if http.statusCode == 401 && attempt == 0 {
+                continue
+            }
+
+            if http.statusCode == 401 {
+                throw APIError.notLoggedIn
+            }
+
+            if http.statusCode == 404 {
+                throw APIError.reservationMissing
+            }
+
+            if http.statusCode == 409 {
+                throw APIError.reservationUnavailable
+            }
+
+            let expectedStatus =
+                method == "POST" ? 201 : 200
+
+            guard http.statusCode == expectedStatus else {
+                throw APIError.serverUnavailable
+            }
+
+            return data
+        }
+
+        throw APIError.notLoggedIn
+    }
+
+
+    // MARK: Facility
+
+    func getFacilities(
+        search: String,
+        category: String,
+        center: ProgramLocation?,
+        radius: Double,
+        page: Int
+    ) async throws -> FacilityPage {
+
+        var components = URLComponents(
+            string: "\(baseURL)/api/facilities"
+        )!
+
+        var items = [
+            URLQueryItem(
+                name: "q",
+                value: search
+            ),
+            URLQueryItem(
+                name: "category",
+                value: category
+            ),
+            URLQueryItem(
+                name: "page",
+                value: String(page)
+            )
+        ]
+
+        if let center {
+
+            items += [
+                URLQueryItem(
+                    name: "lat",
+                    value: String(center.latitude)
+                ),
+                URLQueryItem(
+                    name: "lon",
+                    value: String(center.longitude)
+                ),
+                URLQueryItem(
+                    name: "radius",
+                    value: String(radius)
+                )
+            ]
+        }
+
+        components.queryItems = items
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+
+        request.timeoutInterval = 30
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let (data, response) = try await session.data(
+            for: request
+        )
+
+        guard
+            let http = response as? HTTPURLResponse,
+            http.statusCode == 200
+        else {
+            throw APIError.serverUnavailable
+        }
+
+        let result = try JSONDecoder().decode(
+            FacilityPage.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
+        }
+
+        return result
+    }
+
+
+    // MARK: Program
+
+    func getPrograms(
+        after: String? = nil
+    ) async throws -> ProgramPage {
+
+        var components = URLComponents(
+            string: "\(baseURL)/api/programs"
+        )!
+
+        if let after {
+            components.queryItems = [
+                URLQueryItem(
+                    name: "after",
+                    value: after
+                )
+            ]
+        }
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+
+        request.timeoutInterval = 15
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let (data, response) = try await session.data(
+            for: request
+        )
+
+        guard
+            let http = response as? HTTPURLResponse,
+            http.statusCode == 200
+        else {
+            throw APIError.serverUnavailable
+        }
+
+        let page = try JSONDecoder().decode(
+            ProgramPage.self,
+            from: data
+        )
+
+        guard page.success else {
+            throw APIError.invalidResponse
+        }
+
+        return page
+    }
+
+
+    // MARK: Review
+
+    func getProgramReviews(
+        programId: String, after: String? = nil
+    ) async throws -> ReviewListResponse {
+
+        guard programId.range(
+            of: "^[A-Za-z0-9_-]{1,128}$",
+            options: .regularExpression
+        ) != nil else {
+            throw APIError.invalidURL
+        }
+
+        var components = URLComponents(string: "\(baseURL)/api/programs/\(programId)/reviews")
+        if let after { components?.queryItems = [URLQueryItem(name: "after", value: after)] }
+        guard let url = components?.url else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let (data, response) = try await session.data(
+            for: request
+        )
+
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+
+        guard http.statusCode == 200 else {
+            throw APIError.serverUnavailable
+        }
+
+        let result = try JSONDecoder().decode(
+            ReviewListResponse.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
+        }
+
+        return result
+    }
+
+
+    // MARK: Profile
+
+    private struct ProfileResponse: Decodable {
+
+        struct Profile: Decodable {
+            let id: String
+        }
+
+        let success: Bool
+        let user: Profile
+    }
+
+
+    func getMyProfile() async throws -> Data {
+        try await requestProfile(
+            method: "GET"
+        )
+    }
+
+
+    func saveOnboarding(
+        _ profile: OnboardingProfile
+    ) async throws {
+
+        let payload = OnboardingPreferences(
+            profile: profile
+        )
+
+        _ = try await requestProfile(
+            method: "PATCH",
+            body: JSONEncoder().encode(payload)
+        )
+    }
+
+
+    func saveConditions(
+        _ conditions: ExerciseConditionsPayload
+    ) async throws {
+
+        _ = try await requestProfile(
+            method: "PATCH",
+            body: JSONEncoder().encode(
+                conditions
+            )
+        )
+    }
+
+
+    func savePersonalDetails(
+        name: String,
+        phone: String
+    ) async throws {
+
+        struct Payload: Encodable {
+            let name: String
+            let phone: String
+        }
+
+        let payload = Payload(
+            name: name,
+            phone: phone
+        )
+
+        _ = try await requestProfile(
+            method: "PATCH",
+            body: JSONEncoder().encode(payload)
+        )
+    }
+
+
+    func registerMedicalTestData() async throws {
+
+        _ = try await requestProfile(
+            method: "PATCH",
+            body: JSONEncoder().encode(
+                ["registerMedicalTestData": true]
+            )
+        )
+    }
+
+
+    private func requestProfile(
+        method: String,
+        body: Data? = nil
+    ) async throws -> Data {
+
+        guard let user = Auth.auth().currentUser else {
+            throw APIError.notLoggedIn
+        }
+
         guard let url = URL(
             string: "\(baseURL)/api/users/me"
         ) else {
             throw APIError.invalidURL
         }
-        let session = URLSession(configuration: .ephemeral,
-                                 delegate: ProfileRedirectBlocker(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
         for attempt in 0...1 {
-            let token = try await user.getIDToken(forcingRefresh: attempt == 1)
+
+            let token = try await user.getIDToken(
+                forcingRefresh: attempt == 1
+            )
+
             var request = URLRequest(url: url)
+
             request.httpMethod = method
             request.httpBody = body
-            if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+
+            if body != nil {
+                request.setValue(
+                    "application/json",
+                    forHTTPHeaderField: "Content-Type"
+                )
+            }
+
             request.timeoutInterval = 15
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
+
+            request.setValue(
+                "Bearer \(token)",
+                forHTTPHeaderField: "Authorization"
+            )
+
+            request.setValue(
+                "application/json",
+                forHTTPHeaderField: "Accept"
+            )
+
+            let (data, response) = try await session.data(
+                for: request
+            )
+
+            guard let httpResponse =
+                    response as? HTTPURLResponse
+            else {
                 throw APIError.invalidResponse
             }
-            print("Express \(method) /api/users/me HTTP Status: \(httpResponse.statusCode)")
+
+            print(
+                "Express \(method) /api/users/me HTTP Status: \(httpResponse.statusCode)"
+            )
+
             switch httpResponse.statusCode {
+
             case 200:
-                guard let profile = try? JSONDecoder().decode(ProfileResponse.self, from: data),
-                      profile.success, profile.user.id == user.uid,
-                      Auth.auth().currentUser?.uid == user.uid else {
+
+                guard
+                    let profile = try? JSONDecoder().decode(
+                        ProfileResponse.self,
+                        from: data
+                    ),
+                    profile.success,
+                    profile.user.id == user.uid,
+                    Auth.auth().currentUser?.uid == user.uid
+                else {
                     throw APIError.invalidResponse
                 }
+
                 return data
+
             case 401:
-                if attempt == 0 { continue }
+
+                if attempt == 0 {
+                    continue
+                }
+
                 throw APIError.notLoggedIn
-            case 404: throw APIError.profileMissing
-            default: throw APIError.serverUnavailable
+
+            case 404:
+                throw APIError.profileMissing
+
+            default:
+                throw APIError.serverUnavailable
             }
         }
+
         throw APIError.notLoggedIn
     }
 }
+
+
 #else
+
+// MARK: - Non-Simulator Fallback
+
 final class APIService {
+
     static let shared = APIService()
-    func getMyReservations() async throws -> [RemoteReservation] { throw APIError.serverUnavailable }
-    func cancelReservation(programId: String) async throws { throw APIError.serverUnavailable }
+
+    private init() {}
+
+    func createReservation(
+        programId: String
+    ) async throws -> RemoteReservation {
+        throw APIError.serverUnavailable
+    }
+
+    func getMyReservations() async throws -> [RemoteReservation] {
+        throw APIError.serverUnavailable
+    }
+
+    func cancelReservation(
+        programId: String,
+        reason: String? = nil
+    ) async throws {
+        throw APIError.serverUnavailable
+    }
+
+    func getFacilities(
+        search: String,
+        category: String,
+        center: ProgramLocation?,
+        radius: Double,
+        page: Int
+    ) async throws -> FacilityPage {
+        throw APIError.serverUnavailable
+    }
+
+    func getPrograms(
+        after: String? = nil
+    ) async throws -> ProgramPage {
+        throw APIError.serverUnavailable
+    }
+
+    func getProgramReviews(
+        programId: String, after: String? = nil
+    ) async throws -> ReviewListResponse {
+        throw APIError.serverUnavailable
+    }
+
+    func getMyProfile() async throws -> Data {
+        throw APIError.serverUnavailable
+    }
+
+    func saveOnboarding(
+        _ profile: OnboardingProfile
+    ) async throws {
+        throw APIError.serverUnavailable
+    }
+
+    func saveConditions(
+        _ conditions: ExerciseConditionsPayload
+    ) async throws {
+        throw APIError.serverUnavailable
+    }
+
+    func savePersonalDetails(
+        name: String,
+        phone: String
+    ) async throws {
+        throw APIError.serverUnavailable
+    }
+
+    func registerMedicalTestData() async throws {
+        throw APIError.serverUnavailable
+    }
 }
+
 #endif
+
+
+// MARK: - API Error
+
 enum APIError: Error {
+
     case notLoggedIn
     case invalidURL
     case invalidResponse
     case profileMissing
     case serverUnavailable
+    case reservationMissing
+    case reservationUnavailable
+
     var userMessage: String {
+
         switch self {
-        case .notLoggedIn: return "다시 로그인해주세요."
-        case .profileMissing: return "회원정보를 찾을 수 없어요."
-        case .invalidURL, .invalidResponse: return "요청을 처리하지 못했어요. 다시 시도해주세요."
-        case .serverUnavailable: return "서버에 연결하지 못했어요. 잠시 후 다시 시도해주세요."
+
+        case .notLoggedIn:
+            return "다시 로그인해주세요."
+
+        case .profileMissing:
+            return "회원정보를 찾을 수 없어요."
+
+        case .invalidURL, .invalidResponse:
+            return "요청을 처리하지 못했어요. 다시 시도해주세요."
+
+        case .serverUnavailable:
+            return "서버에 연결하지 못했어요. 잠시 후 다시 시도해주세요."
+
+        case .reservationMissing:
+            return "프로그램 또는 예약 내역을 찾을 수 없어요. 목록을 새로고침해 주세요."
+
+        case .reservationUnavailable:
+            return "이미 예약했거나 예약이 마감된 프로그램이에요. 예약 내역을 확인해 주세요."
         }
     }
 }
