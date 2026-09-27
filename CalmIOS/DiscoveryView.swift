@@ -100,8 +100,9 @@ extension EnvironmentValues {
 
 struct DiscoveryView: View {
     @ObservedObject var store: WellnessStore
-    @State private var showPrograms = false
+    @State private var showPrograms = true
     var body: some View {
+        NavigationStack {
         VStack(spacing: 0) {
             Picker("탐색 대상", selection: $showPrograms) {
                 Text("기관").tag(false)
@@ -109,6 +110,11 @@ struct DiscoveryView: View {
             }.pickerStyle(.segmented).padding(.horizontal, 24).padding(.vertical, 8)
             if showPrograms { ProgramDiscoveryView(store: store) }
             else { FacilityDiscoveryView() }
+        }
+        .navigationTitle("탐색")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.white, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 }
@@ -134,7 +140,7 @@ private struct ProgramDiscoveryView: View {
             }
             switch query.filter {
             case .category: return query.category == "전체" || query.category == program.category
-            case .venue: return query.venue == "전체" || query.venue == program.facilityId
+            case .venue: return query.venue == "전체" || query.venue == program.facilityName
             case .group: return !query.smallGroupOnly || program.participationType == "SMALL_GROUP"
             case .free: return program.price == 0
             case .paid: return program.price.map { $0 > 0 } ?? false
@@ -156,7 +162,7 @@ private struct ProgramDiscoveryView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        Group {
             VStack(spacing: 0) {
                 searchHeader
                 if hasPlaceQuery {
@@ -189,8 +195,8 @@ private struct ProgramDiscoveryView: View {
         }
     }
 
-    private var programCategories: [String] { Array(Set(programs.map(\.category))).sorted() }
-    private var programVenues: [String] { Array(Set(programs.map(\.facilityId))).filter { !$0.isEmpty }.sorted() }
+    private var programCategories: [String] { Array(Set(programs.map(\.category))).filter { !$0.isEmpty }.sorted() }
+    private var programVenues: [String] { Array(Set(programs.map(\.facilityName))).filter { !$0.isEmpty }.sorted() }
 
     private var searchHeader: some View {
         VStack(spacing: 16) {
@@ -220,7 +226,7 @@ private struct ProgramDiscoveryView: View {
                         HStack(spacing: 8) {
                             ForEach(DiscoveryFilter.allCases, id: \.self) { filter in
                                 Button { query.filter = filter } label: {
-                                    Text(filter.rawValue).font(.footnote).padding(.horizontal, 16).frame(minHeight: 40)
+                                    Text(filter.rawValue).font(AppTypography.font(13)).padding(.horizontal, 16).frame(minHeight: 40)
                                         .background(query.filter == filter ? Theme.mint.opacity(0.6) : Theme.background, in: Capsule())
                                         .overlay(Capsule().strokeBorder(query.filter == filter ? Theme.accent.opacity(0.5) : .clear))
                                 }.buttonStyle(.plain).accessibilityAddTraits(query.filter == filter ? .isSelected : [])
@@ -271,22 +277,21 @@ private struct ProgramDiscoveryView: View {
                             Text(query.center == nil ? "추천 운동" : "주변 프로그램").font(AppTypography.font(16, weight: .bold))
                             Text("\(results.count)건").font(.footnote).foregroundStyle(Theme.accent)
                             Spacer()
-                            Picker("정렬", selection: $query.sort) {
+                            Menu {
+                              Picker("정렬", selection: $query.sort) {
                                 Text("일정순").tag(ProgramSort.date)
                                 if query.center != nil { Text("거리순").tag(ProgramSort.distance) }
-                            }.pickerStyle(.menu).font(.caption)
+                              }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(query.sort == .distance ? "거리순" : "일정순")
+                                    Image(systemName: "chevron.down")
+                                }.font(AppTypography.font(11)).foregroundStyle(.secondary).frame(minHeight: 44)
+                            }
                         }
                         ForEach(results) { program in
                             NavigationLink(value: program) {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text(program.title).font(AppTypography.font(16, weight: .medium))
-                                    Text(program.category).font(AppTypography.font(12)).foregroundStyle(Theme.accent)
-                                    if let date = program.startDate {
-                                        Text(date, format: .dateTime.month().day().hour().minute()).font(AppTypography.font(12))
-                                    }
-                                    Text(program.priceLabel).font(AppTypography.font(13))
-                                }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
-                                    .background(.white, in: RoundedRectangle(cornerRadius: 8))
+                                DiscoveryProgramCard(program: program)
                             }.buttonStyle(.plain)
                         }
                         if loading { ProgressView().padding() }
@@ -343,6 +348,44 @@ private struct ProgramDiscoveryView: View {
     }
 }
 
+private struct DiscoveryProgramCard: View {
+    let program: RemoteProgram
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !program.facilityName.isEmpty {
+                        Text(program.facilityName).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                    }
+                    Text(program.title).font(AppTypography.font(16, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+                    if let date = program.startDate {
+                        Text(date, format: .dateTime.month().day().hour().minute())
+                            .font(AppTypography.font(13)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                SafeAssetImage(name: "NextIcon", fallback: "chevron.right").frame(width: 19, height: 26)
+            }
+            if !program.category.isEmpty || program.price != nil {
+                HStack(spacing: 8) {
+                    if !program.category.isEmpty {
+                        Text(program.category).font(AppTypography.font(11)).foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 14).padding(.vertical, 6)
+                            .background(Theme.mint.opacity(0.4), in: Capsule())
+                    }
+                    Spacer(minLength: 0)
+                    if program.price != nil {
+                        Text(program.priceLabel).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 16)
+            .background(.white, in: RoundedRectangle(cornerRadius: 24))
+    }
+}
+
 private struct FacilityDiscoveryView: View {
     @State private var search = ""
     @State private var category = ""
@@ -362,7 +405,7 @@ private struct FacilityDiscoveryView: View {
     private var pins: [RemoteFacility] { Array(facilities.filter { $0.location != nil }.prefix(100)) }
 
     var body: some View {
-        NavigationStack {
+        Group {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -373,7 +416,7 @@ private struct FacilityDiscoveryView: View {
                             Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
                                 .accessibilityLabel("검색어 지우기")
                         }
-                    }.padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                    }.padding(16).frame(minHeight: 56).background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
                     HStack {
                         Text("서울 기관").font(.headline)
                         Spacer()
@@ -385,12 +428,12 @@ private struct FacilityDiscoveryView: View {
                     Map(coordinateRegion: $region, annotationItems: pins) { facility in
                         MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: facility.latitude!, longitude: facility.longitude!)) {
                             Button { selected = facility } label: {
-                                Image(systemName: "mappin.circle.fill").font(.system(size: 28))
+                                Image(systemName: "mappin.circle.fill").font(.system(size: 20))
                                     .foregroundStyle(Theme.accent).background(.white, in: Circle())
                                     .frame(width: 44, height: 44)
                             }.buttonStyle(.plain).accessibilityLabel(facility.name)
                         }
-                    }.frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 8))
+                    }.frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 24))
                         .accessibilityLabel("기관 위치 지도")
                     HStack {
                         Button {
@@ -417,7 +460,7 @@ private struct FacilityDiscoveryView: View {
                         Text(errorMessage).foregroundStyle(.secondary)
                         Button("다시 시도") { Task { await load(page: 0, reset: true) } }
                     }
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 12) {
                         ForEach(facilities) { facility in
                             NavigationLink(value: facility) {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -427,14 +470,14 @@ private struct FacilityDiscoveryView: View {
                                         Image(systemName: "chevron.right").font(.caption)
                                     }
                                     Text(facility.facilityType).font(.caption).foregroundStyle(Theme.accent)
-                                    Text(facility.address).font(.subheadline).foregroundStyle(.secondary)
+                                    Text(facility.address).font(AppTypography.font(13)).foregroundStyle(.secondary)
                                     if let distance = facility.distanceKm {
                                         Text("직선거리 \(distance, specifier: "%.1f")km").font(.caption).foregroundStyle(.secondary)
                                     }
                                     if facility.location == nil { Text("위치 정보 없음").font(.caption).foregroundStyle(.secondary) }
-                                }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16)
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                                    .background(.white, in: RoundedRectangle(cornerRadius: 24))
                             }.buttonStyle(.plain)
-                            Divider()
                         }
                     }
                     if loading { ProgressView().frame(maxWidth: .infinity).padding() }
