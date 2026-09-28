@@ -43,6 +43,14 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
     let programId: String
     let programName: String
     let facilityName: String
+    let instructorName: String
+    let scheduleText: String
+    let durationMinutes: Int?
+    let instructorBio: String
+    let instructorSpecialty: String
+    let participationGuide: [String]
+    let amenities: [String]
+    let isTestData: Bool
     let bookingAvailable: Bool
     let bookingUnavailableReason: String?
     var title: String { programName }
@@ -61,6 +69,8 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
     let latitude: Double?
     let longitude: Double?
     private enum CodingKeys: String, CodingKey {
+        case instructorName, participationGuide, amenities, isTestData
+        case scheduleText, durationMinutes, instructorBio, instructorSpecialty
         case bookingAvailable, bookingUnavailableReason
         case id, programId, programName, title, facilityName, description, exerciseType, difficulty, participationType, facilityId, instructorId, startAt, endAt, price, capacity, reservedCount, imageURL, latitude, longitude
     }
@@ -73,6 +83,14 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
         programName = try values.decodeIfPresent(String.self, forKey: .programName)
             ?? values.decode(String.self, forKey: .title)
         facilityName = try values.decodeIfPresent(String.self, forKey: .facilityName) ?? ""
+        instructorName = try values.decodeIfPresent(String.self, forKey: .instructorName) ?? ""
+        scheduleText = try values.decodeIfPresent(String.self, forKey: .scheduleText) ?? ""
+        durationMinutes = try values.decodeIfPresent(Int.self, forKey: .durationMinutes)
+        instructorBio = try values.decodeIfPresent(String.self, forKey: .instructorBio) ?? ""
+        instructorSpecialty = try values.decodeIfPresent(String.self, forKey: .instructorSpecialty) ?? ""
+        participationGuide = try values.decodeIfPresent([String].self, forKey: .participationGuide) ?? []
+        amenities = try values.decodeIfPresent([String].self, forKey: .amenities) ?? []
+        isTestData = try values.decodeIfPresent(Bool.self, forKey: .isTestData) ?? false
         bookingAvailable = try values.decodeIfPresent(Bool.self, forKey: .bookingAvailable) ?? false
         bookingUnavailableReason = try values.decodeIfPresent(String.self, forKey: .bookingUnavailableReason)
         description = try values.decodeIfPresent(String.self, forKey: .description) ?? ""
@@ -137,6 +155,13 @@ struct ProgramPage: Decodable {
     let success: Bool
     let programs: [RemoteProgram]
     let nextCursor: String?
+}
+
+struct NearbyProgramResponse: Decodable {
+    let success: Bool
+    let radius: Double
+    let count: Int
+    let programs: [RemoteProgram]
 }
 
 
@@ -642,6 +667,161 @@ final class APIService {
 
         return page
     }
+    func getNearbyPrograms(
+        center: ProgramLocation,
+        radius: Double
+    ) async throws -> [RemoteProgram] {
+
+        guard (0.5...10).contains(radius) else {
+            throw APIError.invalidURL
+        }
+
+        guard var components = URLComponents(
+            url: try endpoint("/api/programs/nearby"),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw APIError.invalidURL
+        }
+
+        components.queryItems = [
+            URLQueryItem(
+                name: "lat",
+                value: String(center.latitude)
+            ),
+            URLQueryItem(
+                name: "lon",
+                value: String(center.longitude)
+            ),
+            URLQueryItem(
+                name: "radius",
+                value: String(radius)
+            )
+        ]
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+
+        request.timeoutInterval = 30
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let (data, response) = try await session.data(
+            for: request
+        )
+
+        guard
+            let http = response as? HTTPURLResponse,
+            http.statusCode == 200
+        else {
+            throw APIError.serverUnavailable
+        }
+
+        let result = try JSONDecoder().decode(
+            NearbyProgramResponse.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
+        }
+
+        return result.programs
+    }
+
+    func searchPrograms(
+        query: String
+    ) async throws -> [RemoteProgram] {
+
+        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !keyword.isEmpty else {
+            return []
+        }
+
+        guard var components = URLComponents(
+            url: try endpoint("/api/programs/search"),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw APIError.invalidURL
+        }
+
+        components.queryItems = [
+            URLQueryItem(
+                name: "q",
+                value: keyword
+            )
+        ]
+
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+
+        defer {
+            session.invalidateAndCancel()
+        }
+
+        var request = URLRequest(url: url)
+
+        request.timeoutInterval = 15
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Accept"
+        )
+
+        let (data, response) = try await session.data(
+            for: request
+        )
+
+        guard
+            let http = response as? HTTPURLResponse,
+            http.statusCode == 200
+        else {
+            throw APIError.serverUnavailable
+        }
+
+        let result = try JSONDecoder().decode(
+            ProgramSearchResponse.self,
+            from: data
+        )
+
+        guard result.success else {
+            throw APIError.invalidResponse
+        }
+
+        return result.programs
+    }
+
+
+    struct ProgramSearchResponse: Decodable {
+        let success: Bool
+        let query: String
+        let count: Int
+        let programs: [RemoteProgram]
+    }
+
 
 
     // MARK: Review

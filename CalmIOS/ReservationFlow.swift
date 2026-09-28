@@ -87,72 +87,52 @@ struct RemoteProgramDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
 
-                // Firebase에 프로그램 이미지 필드가 없으므로 기본 이미지 영역 사용
-                ZStack {
-                    Theme.surface
-
-                    Image(systemName: "figure.mind.and.body")
-                        .font(.system(size: 52))
-                        .foregroundStyle(Theme.accent)
-                }
-                .frame(height: 222)
+                heroPhoto
 
                 VStack(alignment: .leading, spacing: 24) {
 
-                    // MARK: 프로그램 기본 정보
-                    VStack(alignment: .leading, spacing: 12) {
-
-                        Text(program.programName)
-                            .font(
-                                AppTypography.font(
-                                    20,
-                                    weight: .bold
-                                )
-                            )
-                            .frame(
-                                maxWidth: .infinity,
-                                alignment: .leading
-                            )
-
-                        HStack(
-                            alignment: .top,
-                            spacing: 12
-                        ) {
-                            Text("기관")
-                                .foregroundStyle(.secondary)
-
-                            Text(program.facilityName)
-                                .foregroundStyle(.primary)
+                    detailSummary
+                    VStack(spacing: 12) {
+                        ProgramInfoPanel(title: "운동정보") {
+                            HStack(spacing: 0) {
+                                detailMetric("종목", value: program.category.isEmpty ? "미등록" : program.category, asset: "ExerciseTypeLatest")
+                                Divider().frame(height: 36)
+                                detailMetric("난이도", value: difficultyLabel, asset: "ExerciseDifficultyLatest")
+                                Divider().frame(height: 36)
+                                detailMetric("참여 형태", value: participationLabel, asset: "ExerciseGroupLatest")
+                            }
                         }
-                        .font(AppTypography.font(11))
-                    }
-                    .padding(.horizontal, 8)
-
-                    // MARK: 프로그램 정보
-                    ProgramInfoPanel(title: "프로그램 정보") {
-                        VStack(
-                            alignment: .leading,
-                            spacing: 14
-                        ) {
-
-                            infoRow(
-                                title: "프로그램",
-                                value: program.programName
-                            )
-
-                            Divider()
-
-                            infoRow(
-                                title: "기관",
-                                value: program.facilityName
-                            )
+                        ProgramInfoPanel(title: "참여안내") {
+                            VStack(alignment: .leading, spacing: 3) {
+                                if program.participationGuide.isEmpty {
+                                    Text(program.description.isEmpty ? "등록된 참여 안내가 없어요." : program.description)
+                                } else {
+                                    ForEach(Array(program.participationGuide.enumerated()), id: \.offset) { _, text in
+                                        HStack(alignment: .top, spacing: 5) { Text("•"); Text(text).frame(maxWidth: .infinity, alignment: .leading) }
+                                    }
+                                }
+                            }.font(AppTypography.font(11)).foregroundStyle(.secondary).lineSpacing(4)
+                        }
+                        ProgramInfoPanel(title: "편의시설 및 서비스") {
+                            if program.amenities.isEmpty {
+                                Text("등록된 편의시설 정보가 없어요.").font(AppTypography.font(11)).foregroundStyle(.secondary)
+                            } else {
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
+                                    ForEach(Array(program.amenities.enumerated()), id: \.offset) { _, name in
+                                        VStack(spacing: 12) {
+                                            SafeAssetImage(name: amenityAsset(name), fallback: "building.2").frame(width: 29, height: 38)
+                                            Text(name).font(AppTypography.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                        }.frame(maxWidth: .infinity)
+                                    }
+                                }
+                            }
                         }
                     }
-
-                    reviewSection
 
                 }
                 .padding(24)
+                Theme.background.frame(height: 7).padding(.top, 32)
+                reviewSection.padding(24)
             }
             .frame(maxWidth: 600)
             .frame(maxWidth: .infinity)
@@ -160,7 +140,7 @@ struct RemoteProgramDetailView: View {
         .background(
             Color.white.ignoresSafeArea()
         )
-        .navigationTitle("프로그램 상세")
+        .navigationTitle("운동 후기")
         .task(id: program.programId) { await loadReviews(reset: true) }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
@@ -294,6 +274,102 @@ struct RemoteProgramDetailView: View {
         }
     }
 
+
+    private var difficultyLabel: String {
+        ["BEGINNER": "초보자", "INTERMEDIATE": "중급", "ADVANCED": "고급"][program.difficulty]
+            ?? (program.difficulty.isEmpty ? "미등록" : program.difficulty)
+    }
+    private var participationLabel: String {
+        ["SMALL_GROUP": "소모임", "SOLO": "개인", "ONE_ON_ONE": "1:1"][program.participationType]
+            ?? (program.participationType.isEmpty ? "미등록" : program.participationType)
+    }
+    private var heroPhoto: some View {
+        Color.clear.frame(height: 222).overlay {
+            GeometryReader { geometry in
+                Group {
+                    if let source = program.imageURL, let url = URL(string: source), url.scheme == "https" {
+                        AsyncImage(url: url) { phase in
+                            if let image = phase.image { image.resizable().scaledToFill() }
+                            else { photoPlaceholder }
+                        }
+                    } else { photoPlaceholder }
+                }.frame(width: geometry.size.width, height: 222).clipped()
+            }
+        }.overlay(alignment: .bottomLeading) {
+            HStack(spacing: 4) {
+                if !program.category.isEmpty { photoBadge(program.category) }
+                if !program.difficulty.isEmpty { photoBadge(difficultyLabel) }
+                if program.price != nil { photoBadge(program.priceLabel) }
+            }.padding(.leading, 24).padding(.bottom, 16)
+        }
+    }
+    @ViewBuilder private var photoPlaceholder: some View {
+        if program.isTestData {
+            Image("DetailFrame103").resizable().scaledToFill()
+        } else {
+            ZStack { Theme.surface; Image(systemName: "photo").foregroundStyle(Theme.accent) }
+        }
+    }
+    private func photoBadge(_ text: String) -> some View {
+        Text(text).font(AppTypography.font(11, weight: .medium)).foregroundStyle(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 4).background(.white.opacity(0.95), in: Capsule())
+    }
+    private var detailSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(program.programName).font(AppTypography.font(20, weight: .bold)).fixedSize(horizontal: false, vertical: true)
+                    Text(program.facilityName).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if let count = program.reservedCount, let capacity = program.capacity {
+                    HStack(spacing: 6) {
+                        SafeAssetImage(name: "DetailGroup44", fallback: "person").frame(width: 8.247, height: 10)
+                        Text("\(count)/\(capacity)").font(AppTypography.font(11, weight: .semibold))
+                    }.foregroundStyle(Theme.accent).padding(.horizontal, 11).padding(.vertical, 4)
+                        .background(Theme.mint.opacity(0.6), in: Capsule())
+                }
+            }
+            if !scheduleLabel.isEmpty { infoRow(title: "시간", value: scheduleLabel) }
+            if !program.instructorName.isEmpty { infoRow(title: "강사", value: program.instructorName) }
+        }.padding(.leading, 8)
+    }
+    private func detailMetric(_ title: String, value: String, asset: String) -> some View {
+        VStack(spacing: 8) {
+            SafeAssetImage(name: asset, fallback: "figure.mind.and.body").frame(width: 35, height: 38)
+            VStack(spacing: 2) {
+                Text(title).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                Text(value).font(AppTypography.font(9, weight: .medium)).foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 2).background(Theme.mint.opacity(0.6), in: Capsule())
+            }
+        }.frame(maxWidth: .infinity)
+    }
+    private var scheduleLabel: String {
+        guard let start = program.startDate else {
+            return program.scheduleText + (program.durationMinutes.map { " (\($0)분)" } ?? "")
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "M월 d일(E) a h:mm"
+        var text = formatter.string(from: start)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let end = iso.date(from: program.endAt) ?? ISO8601DateFormatter().date(from: program.endAt), end > start {
+            formatter.dateFormat = "h:mm"
+            text += " ~ " + formatter.string(from: end) + " (\(Int(end.timeIntervalSince(start) / 60))분)"
+        } else if let minutes = program.durationMinutes {
+            text += " (\(minutes)분)"
+        }
+        return text
+    }
+    private func amenityAsset(_ name: String) -> String {
+        if name.contains("키오스크") { return "DetailFrame46" }
+        if name.contains("휴게") { return "DetailGroup46" }
+        if name.contains("퇴실") { return "DetailGroup49" }
+        if name.contains("화장실") { return "DetailGroup50" }
+        return ""
+    }
 
     // MARK: - Reservation
 

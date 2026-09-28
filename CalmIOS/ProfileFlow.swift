@@ -219,6 +219,24 @@ struct MyPageView: View {
     @AppStorage("calm.onboardingCompleted") private var onboardingCompleted = false
     private var completed: [WellnessBooking] { store.bookings.filter { !$0.isCancelled && $0.attendance == .checkedOut } }
 
+    private var recoveryDay: Int {
+        guard let createdAt = Auth.auth().currentUser?.metadata.creationDate else {
+            return 1
+        }
+
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: createdAt)
+        let today = calendar.startOfDay(for: Date())
+
+        let days = calendar.dateComponents(
+            [.day],
+            from: start,
+            to: today
+        ).day ?? 0
+
+        return max(1, days + 1)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -227,7 +245,7 @@ struct MyPageView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(profile.name).font(AppTypography.font(16, weight: .bold))
-                                Text("회복 여정 38일째").font(AppTypography.font(11)).foregroundStyle(ProfileStyle.accent)
+                                Text("회복 여정 \(recoveryDay)일째").font(AppTypography.font(11)).foregroundStyle(ProfileStyle.accent)
                             }
                             Spacer()
                             ProfileArrow()

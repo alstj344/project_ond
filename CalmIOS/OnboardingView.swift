@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import WebKit
+import FirebaseAuth
 
 struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
@@ -594,18 +595,10 @@ private struct AnalysisView: View {
             VStack(spacing: 8) {
                 Text(complete ? "운동 조건 확인이 완료되었어요" : "나에게 맞는 운동을 찾고 있어요")
                     .font(AppTypography.font(20, weight: .bold))
-                Text(complete ? "실제 프로그램 추천은 서비스 연결 후 제공됩니다." : "운동 조건과 선호를 바탕으로\n편하게 참여할 수 있는 운동을 살펴보고 있어요.")
+                Text(complete ? "운동 조건을 저장하고 있어요." : "운동 조건과 선호를 바탕으로\n편하게 참여할 수 있는 운동을 살펴보고 있어요.")
                     .font(AppTypography.font(14)).foregroundStyle(Theme.muted)
             }.multilineTextAlignment(.center)
-            if complete {
-                Button(saving ? "저장 중…" : "홈으로 이동") {
-                    Task { await saveAndContinue() }
-                }.buttonStyle(.borderedProminent).disabled(saving)
-                Button("조건 다시 확인", action: onReview).buttonStyle(.plain)
-                    .disabled(saving)
-            } else {
-                ProgressView().accessibilityLabel("조건 확인 중")
-            }
+            ProgressView().accessibilityLabel(complete ? "운동 조건 저장 중" : "조건 확인 중")
             Spacer()
             Spacer().frame(height: 60)
         }
@@ -613,7 +606,8 @@ private struct AnalysisView: View {
         .frame(maxWidth: 480).frame(maxWidth: .infinity)
         .background(Theme.background.ignoresSafeArea())
         .alert("저장 안내", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
-            Button("확인", role: .cancel) { saveError = nil }
+            Button("다시 시도") { Task { await saveAndContinue() } }
+            Button("돌아가기", role: .cancel, action: onReview)
         } message: { Text(saveError ?? "") }
         .task {
             if !reduceMotion {
@@ -623,6 +617,7 @@ private struct AnalysisView: View {
             catch { return }
             complete = true
             breathing = false
+            await saveAndContinue()
         }
     }
 
@@ -630,9 +625,13 @@ private struct AnalysisView: View {
         guard !saving else { return }
         saving = true
         defer { saving = false }
+        let uid = Auth.auth().currentUser?.uid
         do {
             try await APIService.shared.saveOnboarding(profile)
+            try Task.checkCancellation()
+            guard uid != nil, uid == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
             onboardingCompleted = true
+        } catch is CancellationError {
         } catch {
             saveError = "운동 조건을 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요."
         }
