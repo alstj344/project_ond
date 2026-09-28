@@ -132,12 +132,16 @@ struct HomeView: View {
     @StateObject private var store = WellnessStore()
     @StateObject private var profile = ProfileStore()
     @State private var tab: HomeTab = .home
-    @State private var selectedDay = 2
+    @State private var selectedDate = Date()
     @State private var query = ""
     @State private var navigationIdentity = UUID()
     @State private var attendanceSheet: AttendanceSheet?
     @State private var attendanceBookingID: String?
     @State private var pendingReview = false
+    @State private var authMode: AuthMode = .login
+    @State private var recommendations: [RemoteProgram] = []
+    @State private var recommendationError: String?
+    @State private var remoteReservations: [RemoteReservation] = []
     private let secondary = Color(red: 113 / 255, green: 121 / 255, blue: 115 / 255)
 
     var body: some View {
@@ -146,12 +150,12 @@ struct HomeView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         VStack(alignment: .leading, spacing: 32) {
-                            Image("HomeBrand").resizable().scaledToFit().frame(width: 50, height: 31)
+                            Image("HomeBrand").resizable().scaledToFit().frame(width: 44, height: 28)
                                 .foregroundStyle(Theme.accent).accessibilityLabel("마음걸음")
                             VStack(alignment: .leading, spacing: 0) {
                                 if isBrowsing {
-                                    Button { showLogin = true } label: {
-                                        Text("로그인").underline()
+                                    Button { authMode = .login; showLogin = true } label: {
+                                        Text("로그인 후,").underline()
                                     }.buttonStyle(.plain)
                                     Text("오늘도 운동을 시작해볼까요?")
                                 } else {
@@ -160,21 +164,26 @@ struct HomeView: View {
                             }
                                 .font(AppTypography.font(24, weight: .bold))
                                 .fixedSize(horizontal: false, vertical: true)
-                            if let booking = store.bookings.first(where: { $0.attendance != .checkedOut && !$0.isCancelled }) {
+                            if isBrowsing {
+                                signupCard
+                            } else if let reservation = upcomingReservation, let program = reservation.program {
+                                remoteReservationCard(reservation, program: program)
+                            } else if let booking = store.bookings.first(where: { $0.attendance != .checkedOut && !$0.isCancelled }) {
                                 reservationCard(booking)
                             } else {
                                 Text("예정된 운동이 없어요.").padding(20)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(.white, in: RoundedRectangle(cornerRadius: 24))
                             }
-                        }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
+                        }.padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 32)
+                            .frame(maxWidth: 600).frame(maxWidth: .infinity)
                             .background(Color(red: 147/255, green: 207/255, blue: 174/255))
-                        VStack(spacing: 24) {
+                        VStack(spacing: 12) {
                             if let error = profile.loadError, !isBrowsing {
                                 Text(error).foregroundStyle(.secondary)
                                 Button("다시 시도") { Task { await profile.refresh() } }
                             }
-                            if !isBrowsing && profile.medicalLoaded {
+                            if !isBrowsing && profile.medicalLoaded && !profile.hasMedicalTestData {
                                 VStack(alignment: .leading, spacing: 12) {
                                     if profile.hasMedicalTestData {
                                         Label("의료 데이터 등록됨 · 테스트용", systemImage: "checkmark.circle")
@@ -192,11 +201,12 @@ struct HomeView: View {
                             }
                             monthlyProgress
                             schedule
-                            if store.bookings.contains(where: { !$0.isCancelled && $0.attendance == .checkedOut }) {
-                                reviewBanner
+                            if isBrowsing || store.bookings.contains(where: { !$0.isCancelled && $0.attendance == .checkedOut }) {
+                                reviewBanner.padding(.top, 10)
                             }
-                        }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
-                        Divider().padding(.vertical, 16)
+                        }.padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 56)
+                            .frame(maxWidth: 600).frame(maxWidth: .infinity)
+                        Theme.background.frame(height: 7)
                         VStack(spacing: 16) {
                             Button { tab = .explore } label: {
                                 HStack {
@@ -205,16 +215,32 @@ struct HomeView: View {
                                     Image(systemName: "chevron.right")
                                 }
                             }.buttonStyle(.plain).padding(.horizontal, 24)
-                            Button { tab = .explore } label: {
-                                Label("내 조건에 맞는 프로그램 찾기", systemImage: "magnifyingglass")
-                                    .frame(maxWidth: .infinity, minHeight: 48)
-                            }.padding(.horizontal, 24)
+                            if !recommendations.isEmpty {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 12) {
+                                        ForEach(recommendations) { program in
+                                            NavigationLink {
+                                                RemoteProgramDetailView(program: program)
+                                                    .toolbar(.visible, for: .navigationBar)
+                                            } label: {
+                                                DiscoveryProgramCard(program: program, background: Theme.background).frame(width: 330)
+                                            }.buttonStyle(.plain)
+                                        }
+                                    }.padding(.horizontal, 24)
+                                }
+                            } else {
+                                Button { tab = .explore } label: {
+                                    Label(recommendationError ?? "프로그램 찾아보기", systemImage: "magnifyingglass")
+                                        .frame(maxWidth: .infinity, minHeight: 48)
+                                }.padding(.horizontal, 24)
+                            }
                         }
+                        .padding(.top, 28)
                         .padding(.bottom, 24)
                     }.font(AppTypography.font(13)).foregroundStyle(Theme.ink)
                 }
                 .background(.white)
-                .refreshable { if !isBrowsing { await profile.refresh() } }
+                .refreshable { await refreshHome() }
                 .background(Color(red: 147/255, green: 207/255, blue: 174/255).ignoresSafeArea(edges: .top))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar(.hidden, for: .navigationBar)
@@ -244,7 +270,15 @@ struct HomeView: View {
             .tabItem { Label("마이페이지", systemImage: "person") }.tag(HomeTab.profile)
         }
         .tint(Theme.accent)
-        .task { if !isBrowsing { await profile.refresh() } }
+        .environment(\.symbolVariants, .none)
+        .task { await refreshHome() }
+        .onChange(of: tab) { value in
+            if value == .home { Task { await refreshHome() } }
+        }
+        .task {
+            do { recommendations = Array(try await APIService.shared.getPrograms(after: nil).programs.prefix(6)) }
+            catch { recommendationError = "추천 운동 다시 찾아보기" }
+        }
         .onChange(of: profile.hasMedicalTestData) { registered in
             store.setMedicalRegistration(!isBrowsing && registered)
         }
@@ -267,15 +301,71 @@ struct HomeView: View {
         .id(navigationIdentity)
         .environment(\.returnHome, { tab = .home; navigationIdentity = UUID() })
         .environment(\.showBookings, { tab = .bookings })
-        .fullScreenCover(isPresented: $showLogin) { AuthView(mode: .login) }
+        .fullScreenCover(isPresented: $showLogin) { AuthView(mode: authMode) }
+    }
+
+    private var signupCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OnD와 함께 운동을 시작해보세요.").font(AppTypography.font(16, weight: .semibold))
+            Text("회원가입하고 나에게 맞는 운동을 추천받아보세요")
+                .font(AppTypography.font(12)).foregroundStyle(secondary)
+            Button { authMode = .signup; showLogin = true } label: {
+                Text("회원가입하고 시작하기").font(AppTypography.font(12, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .foregroundStyle(.white).background(Theme.accent, in: Capsule())
+            }.padding(.top, 4)
+        }.padding(20).background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    private var upcomingReservation: RemoteReservation? {
+        remoteReservations.filter { $0.status == "RESERVED" && ($0.program?.startDate ?? .distantPast) >= Date() }
+            .sorted { ($0.program?.startDate ?? .distantFuture) < ($1.program?.startDate ?? .distantFuture) }.first
+    }
+
+    @MainActor private func refreshHome() async {
+        guard !isBrowsing, let uid = Auth.auth().currentUser?.uid else { return }
+        await profile.refresh()
+        do {
+            let reservations = try await APIService.shared.getMyReservations()
+            guard Auth.auth().currentUser?.uid == uid else { remoteReservations = []; return }
+            remoteReservations = reservations
+        } catch is CancellationError {
+        } catch { recommendationError = "예약 내역은 예약 탭에서 다시 확인해 주세요." }
+    }
+
+    private func remoteReservationCard(_ reservation: RemoteReservation, program: RemoteProgram) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(program.title).font(AppTypography.font(16, weight: .semibold))
+                Spacer()
+                AttendanceBadge(status: .reserved)
+            }
+            if let date = program.startDate {
+                Text(date, format: .dateTime.month().day().weekday().hour().minute())
+                    .font(AppTypography.font(12)).foregroundStyle(secondary)
+            }
+            Text(program.facilityName).font(AppTypography.font(12)).foregroundStyle(secondary)
+            NavigationLink { RemoteReservationDetailView(reservation: reservation, onChanged: {
+                Task { await refreshHome() }
+            }) } label: {
+                Text("예약 확인").font(AppTypography.font(12, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .foregroundStyle(.white).background(Theme.accent, in: Capsule())
+            }.padding(.top, 4)
+        }.padding(20).background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
     }
 
     private var monthlyProgress: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("이번 달 운동").font(AppTypography.font(16, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(isBrowsing ? "나의 운동 기록" : "이번 달 운동").font(AppTypography.font(16, weight: .bold)).foregroundStyle(Theme.ink)
                 Spacer()
-                Text("\(monthlyCount)회 참여").font(AppTypography.font(10)).foregroundStyle(secondary)
+                if !isBrowsing { Text("\(monthlyCount)회 참여").font(AppTypography.font(10)).foregroundStyle(secondary) }
+            }
+            if isBrowsing {
+                Text("참여한 운동을 한눈에 확인하고 기록할 수 있어요.")
+                    .font(AppTypography.font(11)).foregroundStyle(secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 0) {
                 ForEach(0..<4) { index in
@@ -287,12 +377,12 @@ struct HomeView: View {
             }
             .accessibilityElement(children: .ignore).accessibilityLabel("이번 달 운동 목표 4회 중 \(monthlyCount)회 참여")
             NavigationLink { MyExerciseView(store: store, profile: profile) } label: {
-                Text("나의 운동").font(AppTypography.font(14, weight: .medium))
-                    .frame(maxWidth: .infinity, minHeight: 48)
+                Text(isBrowsing ? "기능 알아보기" : "나의 운동").font(AppTypography.font(12, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 44)
                     .foregroundStyle(.white).background(Theme.accent, in: Capsule())
             }
         }
-        .padding(16).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
+        .padding(20).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
     }
 
     private var monthlyCount: Int {
@@ -305,10 +395,16 @@ struct HomeView: View {
     private func reservationCard(_ booking: WellnessBooking) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             bookingLabel(booking)
-            HStack(spacing: 12) {
+            if booking.attendance == .reserved {
+                NavigationLink(value: booking.id) {
+                    Text("예약 확인").font(AppTypography.font(12, weight: .medium))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(.white).background(Theme.accent, in: Capsule())
+                }
+            } else { HStack(spacing: 8) {
                 attendanceButton("조용히 체크인", booking: booking, next: .checkedIn, enabled: booking.attendance == .reserved)
                 attendanceButton("조용히 나가기", booking: booking, next: .checkedOut, enabled: booking.attendance == .checkedIn)
-            }
+            } }
         }
         .padding(16).background(.white, in: RoundedRectangle(cornerRadius: 24))
     }
@@ -330,7 +426,7 @@ struct HomeView: View {
     private var reviewBanner: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("지난 운동은 어떠셨나요?").font(AppTypography.font(16, weight: .bold))
+                Text(isBrowsing ? "운동 후 경험도 기록할 수 있어요" : "지난 운동은 어떠셨나요?").font(AppTypography.font(16, weight: .bold))
                 Text("남겨주신 경험을 바탕으로\n다음 운동을 찾아볼게요.")
                     .font(AppTypography.font(11)).foregroundStyle(secondary)
                 NavigationLink { MyReviewsView(store: store).toolbar(.visible, for: .navigationBar) } label: {
@@ -340,39 +436,65 @@ struct HomeView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Image("HomeReview").resizable().scaledToFit().frame(width: 100, height: 120).accessibilityHidden(true)
-        }.padding(20).background(Theme.mint, in: RoundedRectangle(cornerRadius: 24))
+        }.padding(.leading, 20).padding(.vertical, 12)
+            .background(Theme.mint.opacity(0.32), in: RoundedRectangle(cornerRadius: 24))
     }
 
     private var schedule: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("나의 일정").font(AppTypography.font(16, weight: .bold))
-                Text("9월 \(selectedDay)일").font(.caption2).foregroundStyle(secondary)
-            }
-            HStack(spacing: 2) {
-                ForEach(1...7, id: \.self) { day in
-                    Button { selectedDay = day } label: {
-                        VStack(spacing: 8) {
-                            Text(["일", "월", "화", "수", "목", "금", "토"][day - 1]).font(.caption2)
-                            Text("\(day)").font(.footnote.weight(.semibold))
-                            Image(systemName: "figure.mind.and.body").font(.system(size: 15))
-                                .opacity(store.bookings.contains { $0.day == day && !$0.isCancelled } ? 1 : 0)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .foregroundStyle(selectedDay == day ? Color.white : secondary)
-                        .background(selectedDay == day ? Theme.accent : .clear, in: Capsule())
-                    }
-                    .buttonStyle(.plain).accessibilityLabel("9월 \(day)일")
-                    .accessibilityAddTraits(day == selectedDay ? .isSelected : [])
+                Text(isBrowsing ? "운동일정 미리보기" : "나의 일정").font(AppTypography.font(16, weight: .bold))
+                if isBrowsing {
+                    Spacer()
+                    Text("예시화면").font(AppTypography.font(10)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 12).padding(.vertical, 5).background(Theme.mint.opacity(0.4), in: Capsule())
+                } else {
+                    Text(selectedDate, format: .dateTime.month().day()).font(.caption2).foregroundStyle(secondary)
                 }
             }
-            let daily = store.bookings.filter { $0.day == selectedDay && !$0.isCancelled }
-            if daily.isEmpty { Text("예정된 일정이 없어요.").font(.footnote).foregroundStyle(secondary).padding(.vertical, 12) }
+            if isBrowsing {
+                Text("예약한 프로그램을 달력에서 확인할 수 있어요.")
+                    .font(AppTypography.font(11)).foregroundStyle(secondary)
+            }
+            HStack(spacing: 2) {
+                ForEach(weekDates, id: \.self) { date in
+                    let selected = Calendar.current.isDate(date, inSameDayAs: selectedDate)
+                    Button { selectedDate = date } label: {
+                        VStack(spacing: 8) {
+                            Text(date, format: .dateTime.weekday(.narrow)).font(.caption2)
+                            Text(date, format: .dateTime.day()).font(.footnote.weight(.semibold))
+                            Image(systemName: "figure.mind.and.body").font(.system(size: 15))
+                                .opacity(reservations(on: date).isEmpty ? 0 : 1)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .foregroundStyle(selected ? Color.white : secondary)
+                        .background(selected ? Theme.accent : .clear, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            let daily = reservations(on: selectedDate)
+            if isBrowsing {
+                HStack {
+                    Text("릴랙스 요가(예시)")
+                    Spacer()
+                    Text("10:00–10:45").foregroundStyle(secondary)
+                }.font(AppTypography.font(12)).padding(16)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 14))
+            } else if daily.isEmpty {
+                Text("예정된 일정이 없어요.").font(.footnote).foregroundStyle(secondary).padding(.vertical, 12)
+            }
             ForEach(daily) { booking in
-                NavigationLink(value: booking.id) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack { Text(booking.title).font(.footnote); Spacer(); Text(booking.time).font(.caption2) }
-                        VStack(alignment: .leading) { Text(booking.title).font(.footnote); Text(booking.time).font(.caption2) }
+                NavigationLink { RemoteReservationDetailView(reservation: booking, onChanged: {
+                    Task { await refreshHome() }
+                }) } label: {
+                    HStack {
+                        Text(booking.program?.title ?? "예약한 운동").font(.footnote)
+                        Spacer()
+                        if let date = booking.program?.startDate {
+                            Text(date, format: .dateTime.hour().minute()).font(.caption2)
+                        }
                     }
                     .foregroundStyle(Theme.ink).padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -381,6 +503,18 @@ struct HomeView: View {
             }
         }
         .padding(16).background(Theme.background, in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    private var weekDates: [Date] {
+        let calendar = Calendar.current
+        let start = calendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    private func reservations(on date: Date) -> [RemoteReservation] {
+        remoteReservations.filter {
+            $0.status == "RESERVED" && $0.program?.startDate.map { Calendar.current.isDate($0, inSameDayAs: date) } == true
+        }
     }
 
     private func bookingLabel(_ booking: WellnessBooking) -> some View {

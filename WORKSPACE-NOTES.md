@@ -8,8 +8,9 @@
 - `backend/`: earlier backend implementation; not the currently running server.
 
 The active server checkout is `/Users/iminseo/Desktop/backend`. Its Git history
-differs from this app checkout. Server changes are published separately on
-`codex/backend-cleanup-20260928`; do not force-push that history onto app `main`.
+differs from this app checkout. Server changes are intended for the separate
+`codex/backend-cleanup-20260928` branch; publication has not been confirmed.
+Do not force-push that history onto app `main`.
 
 Finder metadata, Xcode user state, local environment files and service-account
 credentials must stay outside version control. Removing their Git tracking does

@@ -159,11 +159,9 @@ struct RemoteProgramDetailView: View {
                 Button {
                     dismiss()
                 } label: {
-                    Image(
-                        systemName: "chevron.left"
-                    )
+                    Image(systemName: "arrow.left")
                 }
-                .tint(Theme.accent)
+                .tint(Theme.muted)
                 .accessibilityLabel("뒤로 가기")
             }
         }
@@ -476,7 +474,7 @@ struct RemoteProgramDetailView: View {
             Text(title)
                 .foregroundStyle(.secondary)
                 .frame(
-                    width: 60,
+                    width: 24,
                     alignment: .leading
                 )
 
@@ -533,8 +531,7 @@ struct ReviewBody: View {
                 }
             }
             Text(text).font(AppTypography.font(12, relativeTo: .footnote)).lineSpacing(5).fixedSize(horizontal: false, vertical: true)
-        }.foregroundStyle(.secondary).padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.background, in: RoundedRectangle(cornerRadius: 16))
+        }.foregroundStyle(.secondary).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -104,154 +104,82 @@ struct DiscoveryView: View {
     var body: some View {
         NavigationStack {
             ProgramDiscoveryView(store: store)
-                .navigationTitle("탐색")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(.white, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 }
 
 private struct ProgramDiscoveryView: View {
     @ObservedObject var store: WellnessStore
-
     @State private var programs: [RemoteProgram] = []
-    @State private var nearbyPrograms: [RemoteProgram] = []
-    @State private var nearbyLoading = false
-    @State private var nearbyError: String?
     @State private var preferences: OnboardingPreferences?
     @State private var conditions: ExerciseConditionsPayload?
-
     @State private var loading = false
     @State private var loadError: String?
     @State private var nextCursor: String?
-
     @State private var query = DiscoveryQuery()
     @StateObject private var placeSearch = DiscoveryPlaceSearch()
-
     @FocusState private var searchFocused: Bool
-
     @State private var searchRevision = 0
     @State private var selectedArea = ""
-
-    @State private var searchPrograms: [RemoteProgram] = []
-    @State private var programSearchLoading = false
-
-    @State private var showingNearbyFacilities = false
-
-    private var hasPlaceQuery: Bool {
-        !query.text
+    @State private var selectedPlaceID: UUID?
+    private var searchText: String {
+        query.text
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty
     }
 
+    private var isSearching: Bool {
+        !searchText.isEmpty
+    }
+
+    private var searchedPrograms: [RemoteProgram] {
+        guard !searchText.isEmpty else {
+            return []
+        }
+
+        return programs.filter { program in
+            program.title.localizedCaseInsensitiveContains(searchText)
+            || program.category.localizedCaseInsensitiveContains(searchText)
+            || program.facilityName.localizedCaseInsensitiveContains(searchText)
+        }
+    }
     private var results: [RemoteProgram] {
-        let sourcePrograms =
-            query.center == nil
-            ? programs
-            : nearbyPrograms
-
-        return sourcePrograms
-            .filter { program in
-                if let center = query.center {
-                    guard
-                        let location = program.location,
-                        center.kilometers(to: location) <= query.radius
-                    else {
-                        return false
-                    }
-                }
-
-                switch query.filter {
-                case .category:
-                    return query.category == "전체"
-                        || query.category == program.category
-
-                case .venue:
-                    return query.venue == "전체"
-                        || query.venue == program.facilityName
-
-                case .group:
-                    return !query.smallGroupOnly
-                        || program.participationType == "SMALL_GROUP"
-
-                case .free:
-                    return program.price == 0
-
-                case .paid:
-                    return program.price.map { $0 > 0 } ?? false
-
-                default:
-                    return true
-                }
+        programs.filter { program in
+            if let center = query.center {
+                guard let location = program.location, center.kilometers(to: location) <= query.radius else { return false }
             }
-            .sorted { left, right in
-                if query.filter == .recommended
-                    || query.filter == .nearby {
+            switch query.filter {
+            case .category: return query.category == "전체" || query.category == program.category
+            case .venue: return query.venue == "전체" || query.venue == program.facilityName
 
-                    let a = left.matchScore(
-                        preferences: preferences,
-                        conditions: conditions
-                    )
-
-                    let b = right.matchScore(
-                        preferences: preferences,
-                        conditions: conditions
-                    )
-
-                    if a != b {
-                        return a > b
-                    }
-                }
-
-                if query.sort == .distance,
-                   let center = query.center {
-
-                    let a = left.location.map {
-                        center.kilometers(to: $0)
-                    } ?? .infinity
-
-                    let b = right.location.map {
-                        center.kilometers(to: $0)
-                    } ?? .infinity
-
-                    if a != b {
-                        return a < b
-                    }
-                }
-
-                return left.startAt == right.startAt
-                    ? left.id < right.id
-                    : left.startAt < right.startAt
+            case .group: return !query.smallGroupOnly || program.participationType == "SMALL_GROUP"
+            case .free: return program.price == 0
+            case .paid: return program.price.map { $0 > 0 } ?? false
+            default: return true
             }
+        }.sorted { left, right in
+            if query.filter == .recommended {
+                let a = left.matchScore(preferences: preferences, conditions: conditions)
+                let b = right.matchScore(preferences: preferences, conditions: conditions)
+                if a != b { return a > b }
+            }
+            if query.sort == .distance, let center = query.center {
+                let a = left.location.map { center.kilometers(to: $0) } ?? .infinity
+                let b = right.location.map { center.kilometers(to: $0) } ?? .infinity
+                if a != b { return a < b }
+            }
+            return left.startAt == right.startAt ? left.id < right.id : left.startAt < right.startAt
+        }
     }
-
-    // MARK: - Body
 
     var body: some View {
         Group {
             VStack(spacing: 0) {
+                searchHeader
 
-                if showingNearbyFacilities {
-
-                    searchHeader
-                    nearbyFacilityResults
-
+                if isSearching {
+                    searchResultsView
                 } else {
-
-                    ScrollView {
-                        VStack(spacing: 0) {
-
-                            searchHeader
-
-                            if hasPlaceQuery {
-                                unifiedSearchResultsContent
-                            } else {
-                                programListContent
-                            }
-                        }
-                    }
-
+                    programList
                 }
             }
             .frame(maxWidth: 600)
@@ -261,21 +189,20 @@ private struct ProgramDiscoveryView: View {
             )
             .navigationTitle("탐색")
             .navigationBarTitleDisplayMode(.inline)
+
             .task {
                 await loadPrograms(reset: true)
             }
-            .task(
-                id: "\(query.text)|\(searchRevision)"
-            ) {
-                let text = query.text
-                    .trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    )
+
+            .onChange(of: query.text) { _ in
+                placeSearch.cancel()
+            }
+
+            .task(id: "\(query.text)|\(searchRevision)") {
+                let text = searchText
 
                 guard !text.isEmpty else {
                     placeSearch.reset()
-                    searchPrograms = []
-                    programSearchLoading = false
                     return
                 }
 
@@ -287,42 +214,13 @@ private struct ProgramDiscoveryView: View {
                     return
                 }
 
-                guard !Task.isCancelled else {
-                    return
-                }
-
-                programSearchLoading = true
-
-                async let placeTask: Void =
-                    placeSearch.search(text)
-
-                do {
-                    let foundPrograms =
-                        try await APIService.shared
-                            .searchPrograms(
-                                query: text
-                            )
-
-                    try Task.checkCancellation()
-
-                    searchPrograms = foundPrograms
-
-                } catch is CancellationError {
-                    return
-
-                } catch {
-                    searchPrograms = []
-                }
-
-                await placeTask
-
-                if !Task.isCancelled {
-                    programSearchLoading = false
-                }
+                await placeSearch.search(text)
             }
+
             .onDisappear {
                 placeSearch.cancel()
             }
+
             .navigationDestination(
                 for: RemoteProgram.self
             ) { program in
@@ -332,70 +230,329 @@ private struct ProgramDiscoveryView: View {
             }
         }
     }
-
-    // MARK: - Filter data
-
-    private var programCategories: [String] {
-        Array(
-            Set(programs.map(\.category))
-        )
-        .filter { !$0.isEmpty }
-        .sorted()
-    }
-
+    private var programCategories: [String] { Array(Set(programs.map(\.category))).sorted() }
     private var programVenues: [String] {
-        Array(
-            Set(programs.map(\.facilityName))
-        )
-        .filter { !$0.isEmpty }
-        .sorted()
-    }
-
-    private struct ProgramSection: Identifiable {
-        let id: String
-        let programs: [RemoteProgram]
-    }
-
-    private var programSections: [ProgramSection] {
-        guard query.filter == .category
-                || query.filter == .venue
-        else {
-            return [
-                ProgramSection(
-                    id: "",
-                    programs: results
-                )
-            ]
-        }
-
-        let groups = Dictionary(
-            grouping: results
-        ) { program in
-            let value =
-                query.filter == .category
-                ? program.category
-                : program.facilityName
-
-            return value.isEmpty
-                ? "미분류"
-                : value
-        }
-
-        return groups.keys
+        Array(Set(programs.map(\.facilityName)))
+            .filter { !$0.isEmpty }
             .sorted {
-                $0.localizedStandardCompare($1)
-                    == .orderedAscending
+                $0.localizedStandardCompare($1) == .orderedAscending
             }
-            .map {
-                ProgramSection(
-                    id: $0,
-                    programs: groups[$0] ?? []
-                )
+    }
+
+    private var searchHeader: some View {
+        VStack(spacing: 16) {
+                    HStack(spacing: 8) {
+                        SafeAssetImage(name: "SearchIcon", fallback: "magnifyingglass").frame(width: 18, height: 18)
+                        TextField("프로그램, 기관, 지역을 검색해보세요.",text: $query.text)
+                            .font(.subheadline).submitLabel(.search).accessibilityLabel("지역, 주소 또는 장소 검색")
+                            .focused($searchFocused)
+                            .onSubmit { searchFocused = false; searchRevision += 1 }
+                        if !query.text.isEmpty {
+                            Button { query.text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .accessibilityLabel("검색어 지우기")
+                        }
+                    }.padding(16).frame(minHeight: 56).background(Theme.background, in: RoundedRectangle(cornerRadius: 16))
+                    if !isSearching {
+                    if query.center != nil {
+                        HStack {
+                            Button { query.text = selectedArea; searchFocused = true } label: {
+                                Label(selectedArea, systemImage: "mappin.and.ellipse").lineLimit(2)
+                            }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                            Spacer()
+                            Button { query.center = nil; selectedArea = ""; query.radius = 1.5; query.sort = .date } label: { Image(systemName: "xmark.circle.fill") }
+                                .accessibilityLabel("선택 지역 해제")
+                        }.font(.subheadline)
+                    }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(DiscoveryFilter.allCases, id: \.self) { filter in
+                                Button { query.filter = filter } label: {
+                                    HStack(spacing: 4) {
+                                        Text(filter.rawValue)
+                                        if filter == .category || filter == .venue {
+                                            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                                        }
+                                    }.font(AppTypography.font(12)).padding(.horizontal, 16).frame(minHeight: 38)
+                                        .background(query.filter == filter ? Theme.mint.opacity(0.6) : Theme.background, in: Capsule())
+                                        .overlay(Capsule().strokeBorder(query.filter == filter ? Theme.accent.opacity(0.5) : .clear))
+                                }.buttonStyle(.plain).accessibilityAddTraits(query.filter == filter ? .isSelected : [])
+                            }
+                        }
+                    }
+                    if query.filter == .nearby || query.center != nil {
+                        VStack(spacing: 12) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(query.center == nil ? "지역을 검색해 주세요" : "선택 지역 기준 거리").font(.headline)
+                                Spacer()
+                                Text(query.center == nil && query.radius >= 3 ? "3km+" : String(format: "%.1fkm", query.radius))
+                                    .font(.footnote).foregroundStyle(Theme.accent)
+                            }
+                            Slider(value: $query.radius, in: 0.5...(query.center == nil ? 3 : 10), step: 0.1).tint(Theme.accent)
+                                .accessibilityLabel("거리 범위").accessibilityValue(String(format: "%.1f 킬로미터", query.radius))
+                            HStack { Text("500m"); Spacer(); Text(query.center == nil ? "1.5km" : "5km"); Spacer(); Text(query.center == nil ? "3km+" : "10km") }.font(.caption2).foregroundStyle(.secondary)
+                            Text(query.center == nil ? "" : "등록된 위치 기준 · 직선거리")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }.padding(16).background(Theme.surface, in: RoundedRectangle(cornerRadius: 20))
+                    }
+                    if query.filter == .category {
+                        Menu {
+                            Button("전체") {
+                                query.category = "전체"
+                            }
+                            ForEach(programCategories, id: \.self) { category in
+                                Button(category) {
+                                    query.category = category
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text(
+                                    query.category == "전체"
+                                        ? "종목 선택"
+                                        : query.category
+                                    )
+                                    .font(
+                                        AppTypography.font(
+                                            15,
+                                            weight: .medium
+                                        )
+                                    )
+                                    .foregroundStyle(.primary)
+                                    Spacer()
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                                .background(
+                                    Theme.surface,
+                                    in: RoundedRectangle(cornerRadius: 16)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if query.filter == .venue {
+                            Menu {
+                                Button("전체") {
+                                    query.venue = "전체"
+                                }
+
+                                ForEach(programVenues, id: \.self) { venue in
+                                    Button(venue) {
+                                        query.venue = venue
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(
+                                        query.venue == "전체"
+                                            ? "기관 선택"
+                                            : query.venue
+                                    )
+                                    .font(
+                                        AppTypography.font(
+                                            15,
+                                            weight: .medium
+                                        )
+                                    )
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
+                                .background(
+                                    Theme.surface,
+                                    in: RoundedRectangle(cornerRadius: 16)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    if query.filter == .group {
+                        Picker("참여 인원", selection: $query.smallGroupOnly) {
+                            Text("전체").tag(false)
+                            Text("소그룹").tag(true)
+                        }.pickerStyle(.segmented)
+                    }
+                    }
+                }.padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
+    }
+    private var searchResultsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+
+                HStack(spacing: 8) {
+                    Text("프로그램")
+                        .font(AppTypography.font(16, weight: .bold))
+
+                    Text("\(searchedPrograms.count)건")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.accent)
+
+                    Spacer()
+                }
+
+                if searchedPrograms.isEmpty {
+                    Text("검색어와 일치하는 프로그램이 없어요.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(searchedPrograms) { program in
+                        NavigationLink(value: program) {
+                            DiscoveryProgramCard(program: program)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                Text("지역 및 장소")
+                    .font(AppTypography.font(16, weight: .bold))
+
+                if placeSearch.loading {
+
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 30)
+
+                } else if let errorMessage = placeSearch.error {
+
+                    VStack(spacing: 12) {
+                        Text(errorMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        Button("다시 시도") {
+                            searchRevision += 1
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+
+                } else if placeSearch.places.isEmpty {
+
+                    Text("검색어와 일치하는 지역이나 장소가 없어요.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+
+                } else {
+
+                    ForEach(placeSearch.places) { place in
+                        VStack(spacing: 12) {
+
+                            Button {
+                                selectedPlaceID = place.id
+                            } label: {
+                                HStack(spacing: 16) {
+
+                                    Image(systemName: "mappin.and.ellipse")
+                                        .font(.system(size: 22))
+                                        .foregroundStyle(Theme.accent)
+
+                                    VStack(
+                                        alignment: .leading,
+                                        spacing: 4
+                                    ) {
+                                        Text(place.title)
+                                            .font(
+                                                AppTypography.font(
+                                                    15,
+                                                    weight: .medium
+                                                )
+                                            )
+                                            .foregroundStyle(.primary)
+
+                                        if !place.address.isEmpty {
+                                            Text(place.address)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+
+                                    Spacer()
+
+                                    if selectedPlaceID == place.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 22))
+                                            .foregroundStyle(Theme.accent)
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            if selectedPlaceID == place.id {
+                                Button {
+                                    selectedArea = place.title
+
+                                    query.center = ProgramLocation(
+                                        latitude: place.coordinate.latitude,
+                                        longitude: place.coordinate.longitude
+                                    )
+
+                                    query.radius = 3
+                                    query.sort = .distance
+                                    query.filter = .nearby
+                                    query.text = ""
+
+                                    selectedPlaceID = nil
+                                    searchFocused = false
+
+                                } label: {
+                                    Text("이 지역에서 프로그램 찾기")
+                                        .font(
+                                            AppTypography.font(
+                                                15,
+                                                weight: .medium
+                                            )
+                                        )
+                                        .foregroundStyle(.white)
+                                        .frame(
+                                            maxWidth: .infinity,
+                                            minHeight: 50
+                                        )
+                                        .background(
+                                            Theme.accent,
+                                            in: RoundedRectangle(
+                                                cornerRadius: 14
+                                            )
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                        Divider()
+                    }
+                }
             }
+            .padding(24)
+        }
+        .background(Theme.background)
     }
 
     private var resultTitle: String {
         switch query.filter {
+        case .recommended:
+            return "추천 운동"
+
+        case .nearby:
+            return "주변 프로그램"
+
         case .category:
             return "종목별 프로그램"
 
@@ -410,831 +567,234 @@ private struct ProgramDiscoveryView: View {
 
         case .paid:
             return "유료 프로그램"
-
-        default:
-            return query.center == nil
-                ? "추천 운동"
-                : "주변 프로그램"
         }
     }
+    private struct ProgramSection: Identifiable {
+        let id: String
+        let programs: [RemoteProgram]
+    }
 
-    // MARK: - Search Header
-
-    private var searchHeader: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 8) {
-                SafeAssetImage(
-                    name: "SearchIcon",
-                    fallback: "magnifyingglass"
+    private var programSections: [ProgramSection] {
+        guard query.filter == .category || query.filter == .venue else {
+            return [
+                ProgramSection(
+                    id: "",
+                    programs: results
                 )
-                .frame(
-                    width: 18,
-                    height: 18
-                )
+            ]
+        }
 
-                TextField(
-                    "프로그램, 기관, 지역을 검색해보세요.",
-                    text: $query.text
-                )
-                .font(.subheadline)
-                .submitLabel(.search)
-                .accessibilityLabel(
-                    "프로그램, 기관 또는 지역 검색"
-                )
-                .focused($searchFocused)
-                .onSubmit {
-                    searchFocused = false
-                    searchRevision += 1
-                }
-
-                if !query.text.isEmpty {
-                    Button {
-                        query.text = ""
-                    } label: {
-                        Image(
-                            systemName: "xmark.circle.fill"
-                        )
-                    }
-                    .accessibilityLabel(
-                        "검색어 지우기"
-                    )
-                }
-            }
-            .padding(16)
-            .frame(minHeight: 56)
-            .background(
-                Theme.background,
-                in: RoundedRectangle(
-                    cornerRadius: 16
-                )
-            )
-
-            if !hasPlaceQuery {
-                if query.center != nil {
-                    selectedAreaHeader
-                }
-                filterChips
-
-                if query.filter == .nearby {
-
-                    VStack(spacing: 12) {
-                        HStack(
-                            alignment: .firstTextBaseline
-                        ) {
-                            Text(
-                                query.center == nil
-                                    ? "지역을 검색해 주세요"
-                                    : "선택 지역 기준 거리"
-                            )
-                            .font(.headline)
-
-                            Spacer()
-
-                            Text(
-                                query.center == nil
-                                    && query.radius >= 3
-                                    ? "3km+"
-                                    : String(
-                                        format: "%.1fkm",
-                                        query.radius
-                                    )
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(
-                                Theme.accent
-                            )
-                        }
-
-                        Slider(
-                            value: $query.radius,
-                            in: 0.5...(
-                                query.center == nil
-                                    ? 3
-                                    : 10
-                            ),
-                            step: 0.1
-                        )
-                        .tint(Theme.accent)
-                        .onChange(of: query.radius) { _ in
-                            guard query.center != nil else {
-                                return
-                            }
-
-                            Task {
-                                try? await Task.sleep(
-                                    nanoseconds: 350_000_000
-                                )
-
-                                guard !Task.isCancelled else {
-                                    return
-                                }
-
-                                await loadNearbyPrograms()
-                            }
-                        }
-
-                        HStack {
-                            Text("500m")
-                            Spacer()
-
-                            Text(
-                                query.center == nil
-                                    ? "1.5km"
-                                    : "5km"
-                            )
-
-                            Spacer()
-
-                            Text(
-                                query.center == nil
-                                    ? "3km+"
-                                    : "10km"
-                            )
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                        if query.center != nil {
-                            Text(
-                                "등록된 위치 기준 · 직선거리"
-                            )
-                            .font(.caption2)
-                            .foregroundStyle(
-                                .secondary
-                            )
-                        }
-                    }
-                    .padding(16)
-                    .background(
-                        Theme.surface,
-                        in: RoundedRectangle(
-                            cornerRadius: 20
-                        )
-                    )
-                }
-
+        let grouped = Dictionary(grouping: results) { program in
+            if query.filter == .category {
+                return program.category.isEmpty
+                    ? "미분류"
+                    : program.category
+            } else {
+                return program.facilityName.isEmpty
+                    ? "기관 정보 없음"
+                    : program.facilityName
             }
         }
-        .padding(24)
-        .background(.white)
-    }
 
-    private var selectedAreaHeader: some View {
-        HStack {
-            Button {
-                query.text = selectedArea
-                searchFocused = true
-            } label: {
-                Label(
-                    selectedArea,
-                    systemImage: "mappin.and.ellipse"
-                )
-                .lineLimit(2)
+        return grouped.keys
+            .sorted {
+                $0.localizedStandardCompare($1) == .orderedAscending
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.accent)
-
-            Spacer()
-
-            Button {
-                query.center = nil
-                selectedArea = ""
-                query.radius = 1.5
-                query.sort = .date
-            } label: {
-                Image(
-                    systemName: "xmark.circle.fill"
+            .map { name in
+                ProgramSection(
+                    id: name,
+                    programs: grouped[name] ?? []
                 )
             }
-            .accessibilityLabel("선택 지역 해제")
-        }
-        .font(.subheadline)
     }
 
-@ViewBuilder
-private func filterChipLabel(
-    title: String,
-    filter: DiscoveryFilter,
-    showsChevron: Bool
-) -> some View {
-    HStack(spacing: 4) {
-        Text(title)
-
-        if showsChevron {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 10, weight: .semibold))
-        }
-    }
-    .font(
-        AppTypography.font(13)
-    )
-    .padding(
-        .horizontal,
-        16
-    )
-    .frame(
-        minHeight: 40
-    )
-    .foregroundStyle(.primary)
-    .background(
-        query.filter == filter
-            ? Theme.mint.opacity(0.6)
-            : Theme.background,
-        in: Capsule()
-    )
-    .overlay(
-        Capsule()
-            .strokeBorder(
-                query.filter == filter
-                    ? Theme.accent.opacity(0.5)
-                    : .clear
-            )
-    )
-}
-
-    // MARK: - Program List
-
-    private var programListContent: some View {
-        VStack(spacing: 12) {
-                HStack {
-                    Text(resultTitle)
-                        .font(
-                            AppTypography.font(
-                                16,
-                                weight: .bold
-                            )
-                        )
-
-                    Text("\(results.count)건")
-                        .font(.footnote)
-                        .foregroundStyle(
-                            Theme.accent
-                        )
-
-                    Spacer()
-
-                    Menu {
-                        Picker(
-                            "정렬",
-                            selection: $query.sort
-                        ) {
-                            Text("일정순")
-                                .tag(
-                                    ProgramSort.date
-                                )
-
-                            if query.filter == .nearby,
-                               query.center != nil {
-
-                                Text("거리순")
-                                    .tag(ProgramSort.distance)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(
-                                query.sort == .distance
-                                ? "거리순"
-                                : "일정순"
-                            )
-
-                            Image(
-                                systemName: "chevron.down"
-                            )
-                        }
-                        .font(
-                            AppTypography.font(11)
-                        )
-                        .foregroundStyle(.secondary)
-                        .frame(minHeight: 44)
-                    }
-                }
-
-                ForEach(programSections) { section in
-                    ForEach(
-                        section.programs
-                    ) { program in
-                        NavigationLink(
-                            value: program
-                        ) {
-                            DiscoveryProgramCard(
-                                program: program
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if loading || nearbyLoading {
-                    ProgressView()
-                        .padding()
-                }
-
-                if let loadError {
-                    Text(loadError)
-                        .foregroundStyle(
-                            .secondary
-                        )
-
-                    Button("다시 시도") {
-                        Task {
-                            await loadPrograms(
-                                reset: true
-                            )
-                        }
-                    }
-                }
-
-                if query.center == nil,
-                   nextCursor != nil,
-                   !loading {
-
-                    Button("더 보기") {
-                        Task {
-                            await loadPrograms(
-                                reset: false
-                            )
-                        }
-                    }
-                }
-
-                if results.isEmpty
-                    && !loading
-                    && !nearbyLoading
-                    && loadError == nil
-                    && nearbyError == nil {
-
-                    VStack(spacing: 12) {
-                        Text(
-                            query.center == nil
-                            ? "조건에 맞는 프로그램이 없어요."
-                            : "선택한 거리 안에 등록된 프로그램이 없어요."
-                        )
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-
-                        if query.center != nil {
-                            Button(
-                                "다른 지역 검색"
-                            ) {
-                                query.text =
-                                selectedArea
-                                searchFocused = true
-                            }
-                        }
-
-                        Button(
-                            "필터 초기화"
-                        ) {
-                            let center =
-                            query.center
-
-                            query =
-                            DiscoveryQuery()
-
-                            query.center = center
-
-                            if center != nil {
-                                query.radius = 3
-                                query.filter = .nearby
-                            }
-                        }
-                    }
-                    .padding(.vertical, 40)
-                }
-        }
-        .padding(24)
-    }
-    // MARK: - Search Results
-
-    private var unifiedSearchResultsContent: some View {
-        VStack(
-            alignment: .leading,
-            spacing: 24
-        ) {
-                VStack(
-                    alignment: .leading,
-                    spacing: 12
-                ) {
-                    HStack {
-                        Text("프로그램")
-                            .font(
-                                AppTypography.font(
-                                    16,
-                                    weight: .bold
-                                )
-                            )
-
-                        if !programSearchLoading {
-                            Text(
-                                "\(searchPrograms.count)건"
-                            )
-                            .font(.footnote)
-                            .foregroundStyle(
-                                Theme.accent
-                            )
-                        }
-
-                        Spacer()
-
-                        if programSearchLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    }
-
-                    if !programSearchLoading
-                        && searchPrograms.isEmpty {
-
-                        Text(
-                            "검색어와 일치하는 프로그램이 없어요."
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                    }
-
-                    ForEach(
-                        searchPrograms
-                    ) { program in
-                        NavigationLink(
-                            value: program
-                        ) {
-                            DiscoveryProgramCard(
-                                program: program
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Divider()
-
-                VStack(
-                    alignment: .leading,
-                    spacing: 12
-                ) {
-                    Text("지역 및 장소")
-                        .font(
-                            AppTypography.font(
-                                16,
-                                weight: .bold
-                            )
-                        )
-
-                    DiscoveryMapResults(
-                        search: placeSearch,
-                        retry: {
-                            searchRevision += 1
-                        },
-                        select: {
-                            searchFocused = false
-                        },
-                        usePlace: { place in
-                            selectedArea = place.title
-
-                            query.center = ProgramLocation(
-                                latitude: place.coordinate.latitude,
-                                longitude: place.coordinate.longitude
-                            )
-
-                            query.filter = .nearby
-                            query.sort = .distance
-                            query.radius = 3
-
-                            searchFocused = false
-                            query.text = ""
-
-                            Task {
-                                await loadNearbyPrograms()
-                            }
-                        }
-                    )
-                }
-        }
-        .padding(24)
-    }
-
-    // MARK: - Nearby Facility Results
-
-    private var nearbyFacilityResults: some View {
+    private var programList: some View {
         ScrollView {
-            VStack(
-                alignment: .leading,
-                spacing: 20
-            ) {
-                HStack {
-                    Button {
-                        showingNearbyFacilities = false
-                    } label: {
-                        Label(
-                            "검색 결과로 돌아가기",
-                            systemImage: "chevron.left"
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(
-                        Theme.accent
-                    )
+                    VStack(spacing: 12) {
+                        HStack {
+                            Text(resultTitle)
+                                .font(AppTypography.font(16, weight: .bold))
+                            Text("\(results.count)건").font(.footnote).foregroundStyle(Theme.accent)
+                            Spacer()
+                            Picker("정렬", selection: $query.sort) {
+                                Text("일정순").tag(ProgramSort.date)
+                                if query.center != nil { Text("거리순").tag(ProgramSort.distance) }
+                            }.pickerStyle(.menu).font(.caption)
+                        }
+                        ForEach(programSections) { section in
 
-                    Spacer()
-                }
-
-                VStack(
-                    alignment: .leading,
-                    spacing: 4
-                ) {
-                    Text(selectedArea)
-                        .font(
-                            AppTypography.font(
-                                20,
-                                weight: .bold
-                            )
-                        )
-
-                    Text("주변 3km 운동시설")
-                        .font(.subheadline)
-                        .foregroundStyle(
-                            .secondary
-                        )
-                }
-
-                if placeSearch.nearbyLoading {
-                    HStack {
-                        Spacer()
-
-                        ProgressView(
-                            "주변 운동시설 찾는 중…"
-                        )
-
-                        Spacer()
-                    }
-                    .padding(.vertical, 40)
-
-                } else if let error =
-                            placeSearch.nearbyError {
-
-                    Text(error)
-                        .foregroundStyle(
-                            .secondary
-                        )
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .center
-                        )
-                        .padding(.vertical, 40)
-
-                } else if placeSearch
-                            .nearbyFacilities
-                            .isEmpty {
-
-                    Text(
-                        "주변에서 운동시설을 찾지 못했어요."
-                    )
-                    .foregroundStyle(.secondary)
-                    .frame(
-                        maxWidth: .infinity,
-                        alignment: .center
-                    )
-                    .padding(.vertical, 40)
-
-                } else {
-                    HStack {
-                        Text("주변 운동시설")
-                            .font(
-                                AppTypography.font(
-                                    16,
-                                    weight: .bold
-                                )
-                            )
-
-                        Text(
-                            "\(placeSearch.nearbyFacilities.count)곳"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(
-                            Theme.accent
-                        )
-
-                        Spacer()
-                    }
-
-                    ForEach(
-                        placeSearch.nearbyFacilities
-                    ) { facility in
-                        Button {
-                            facility.item.openInMaps(
-                                launchOptions: nil
-                            )
-                        } label: {
-                            VStack(
-                                alignment: .leading,
-                                spacing: 8
-                            ) {
-                                HStack {
-                                    Text(
-                                        facility.title
-                                    )
-                                    .font(
-                                        AppTypography.font(
-                                            16,
-                                            weight: .medium
+                            if !section.id.isEmpty {
+                                HStack(spacing: 6) {
+                                    Text(section.id)
+                                        .font(
+                                            AppTypography.font(
+                                                15,
+                                                weight: .bold
+                                            )
                                         )
-                                    )
-                                    .foregroundStyle(
-                                        Theme.ink
-                                    )
+
+                                    Text("\(section.programs.count)건")
+                                        .font(.footnote)
+                                        .foregroundStyle(Theme.accent)
 
                                     Spacer()
+                                }
+                                .padding(.top, 12)
+                                .accessibilityAddTraits(.isHeader)
+                            }
 
-                                    Image(
-                                        systemName:
-                                            "arrow.up.right.square"
-                                    )
-                                    .foregroundStyle(
-                                        Theme.accent
+                            ForEach(section.programs) { program in
+                                NavigationLink(value: program) {
+                                    DiscoveryProgramCard(
+                                        program: program,
+                                        distanceKilometers: query.center.flatMap { center in
+                                            program.location.map { center.kilometers(to: $0) }
+                                        }
                                     )
                                 }
-
-                                Text(
-                                    facility.address
-                                )
-                                .font(.caption)
-                                .foregroundStyle(
-                                    .secondary
-                                )
-                                .multilineTextAlignment(
-                                    .leading
-                                )
+                                .buttonStyle(.plain)
                             }
-                            .frame(
-                                maxWidth: .infinity,
-                                alignment: .leading
-                            )
-                            .padding(16)
-                            .background(
-                                .white,
-                                in: RoundedRectangle(
-                                    cornerRadius: 20
-                                )
-                            )
                         }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .padding(24)
-        }
+                        if loading { ProgressView().padding() }
+                        if let loadError {
+                            Text(loadError).foregroundStyle(.secondary)
+                            Button("다시 시도") { Task { await loadPrograms(reset: true) } }
+                        }
+                        if nextCursor != nil && !loading {
+                            Button("더 보기") { Task { await loadPrograms(reset: false) } }
+                        }
+                        if results.isEmpty && !loading && loadError == nil {
+                            VStack(spacing: 12) {
+                                Text(query.center == nil ? "조건에 맞는 활동이 없어요." : "선택한 지역과 거리 안에 등록된 프로그램이 없어요.")
+                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                if query.center != nil {
+                                    Button("다른 지역 검색") { query.text = selectedArea; searchFocused = true }
+                                }
+                                Button("필터 초기화") { let center = query.center; query = DiscoveryQuery(); query.center = center; if center != nil { query.radius = 3; query.filter = .nearby } }
+                            }.padding(.vertical, 40)
+                        }
+                    }.padding(24)
+                }.refreshable { await loadPrograms(reset: true) }
     }
 
-    // MARK: - API
-
-    @MainActor
-    private func loadNearbyPrograms() async {
-        guard let center = query.center else {
-            nearbyPrograms = []
-            nearbyError = nil
-            return
-        }
-
-        nearbyLoading = true
-        nearbyError = nil
-
-        defer {
-            nearbyLoading = false
-        }
-
-        do {
-            let foundPrograms = try await APIService.shared
-                .getNearbyPrograms(
-                    center: center,
-                    radius: query.radius
-                )
-
-            try Task.checkCancellation()
-
-            nearbyPrograms = foundPrograms
-
-        } catch is CancellationError {
-            return
-
-        } catch {
-            nearbyPrograms = []
-            nearbyError =
-                "주변 프로그램을 불러오지 못했어요. 다시 시도해 주세요."
-        }
-    }
-    private func loadPrograms(
-        reset: Bool
-    ) async {
-        guard !loading else {
-            return
-        }
-
+    @MainActor private func loadPrograms(reset: Bool) async {
+        guard !loading else { return }
         loading = true
         loadError = nil
-
-        defer {
-            loading = false
-        }
-
+        defer { loading = false }
         do {
             if reset {
                 preferences = nil
                 conditions = nil
-
-                if Auth.auth()
-                    .currentUser != nil {
-
-                    let data =
-                        try await APIService.shared
-                            .getMyProfile()
-
-                    preferences =
-                        try OnboardingPreferences
-                            .decodeResponse(data)
-
-                    conditions =
-                        try ExerciseConditionsPayload
-                            .decodeResponse(data)
+                if Auth.auth().currentUser != nil {
+                    let data = try await APIService.shared.getMyProfile()
+                    preferences = try OnboardingPreferences.decodeResponse(data)
+                    conditions = try ExerciseConditionsPayload.decodeResponse(data)
                 }
             }
-
-            let page =
-                try await APIService.shared
-                    .getPrograms(
-                        after:
-                            reset
-                                ? nil
-                                : nextCursor
-                    )
-
+            let page = try await APIService.shared.getPrograms(after: reset ? nil : nextCursor)
             try Task.checkCancellation()
-
-            if reset {
-                programs =
-                    page.programs
-
-            } else {
-                let ids =
-                    Set(
-                        programs.map(\.id)
-                    )
-
-                programs +=
-                    page.programs.filter {
-                        !ids.contains($0.id)
-                    }
+            if reset { programs = page.programs }
+            else {
+                let ids = Set(programs.map(\.id))
+                programs += page.programs.filter { !ids.contains($0.id) }
             }
-
-            nextCursor =
-                page.nextCursor
-
+            nextCursor = page.nextCursor
         } catch is CancellationError {
-
-        } catch {
-            loadError =
-                "프로그램과 운동 조건을 불러오지 못했어요. 다시 시도해 주세요."
-        }
+        } catch { loadError = "프로그램과 운동 조건을 불러오지 못했어요. 다시 시도해 주세요." }
     }
 }
-
-
-private struct DiscoveryProgramCard: View {
+struct DiscoveryProgramCard: View {
     let program: RemoteProgram
+    var distanceKilometers: Double? = nil
+    var background: Color = .white
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     if !program.facilityName.isEmpty {
-                        Text(program.facilityName).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                        Text(program.facilityName)
+                            .font(AppTypography.font(11))
+                            .foregroundStyle(.secondary)
                     }
-                    Text(program.title).font(AppTypography.font(16, weight: .medium)).fixedSize(horizontal: false, vertical: true)
+
+                    Text(program.title)
+                        .font(AppTypography.font(14, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+
                     if let date = program.startDate {
-                        Text(date, format: .dateTime.month().day().hour().minute())
-                            .font(AppTypography.font(13)).foregroundStyle(.secondary)
+                        Text(
+                            date,
+                            format: .dateTime
+                                .month()
+                                .day()
+                                .hour()
+                                .minute()
+                        )
+                        .font(AppTypography.font(12))
+                        .foregroundStyle(.secondary)
+                    } else if !program.scheduleText.isEmpty {
+                        Text(program.scheduleText)
+                            .font(AppTypography.font(12))
+                            .foregroundStyle(.secondary)
                     }
                 }
+
                 Spacer(minLength: 0)
-                SafeAssetImage(name: "NextIcon", fallback: "chevron.right").frame(width: 19, height: 26)
+
+                SafeAssetImage(
+                    name: "NextIcon",
+                    fallback: "chevron.right"
+                )
+                .frame(width: 10, height: 16)
             }
+
             if !program.category.isEmpty || program.price != nil {
                 HStack(spacing: 8) {
                     if !program.category.isEmpty {
-                        Text(program.category).font(AppTypography.font(11)).foregroundStyle(Theme.accent)
-                            .padding(.horizontal, 14).padding(.vertical, 6)
-                            .background(Theme.mint.opacity(0.4), in: Capsule())
+                        Text(program.category)
+                            .font(AppTypography.font(11))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(
+                                Theme.mint.opacity(0.4),
+                                in: Capsule()
+                            )
                     }
+
+                    if let distanceKilometers {
+                        Text(String(format: "직선 %.1fkm", distanceKilometers))
+                            .font(AppTypography.font(10)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Theme.surface, in: Capsule())
+                    }
+                    if program.participationType == "SMALL_GROUP" {
+                        Text("소그룹").font(AppTypography.font(10)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Theme.surface, in: Capsule())
+                    }
+
                     Spacer(minLength: 0)
+
                     if program.price != nil {
-                        Text(program.priceLabel).font(AppTypography.font(11)).foregroundStyle(.secondary)
+                        Text(program.priceLabel)
+                            .font(AppTypography.font(11))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 16)
-            .background(.white, in: RoundedRectangle(cornerRadius: 24))
+        }
+        .frame(
+            maxWidth: .infinity,
+            alignment: .leading
+        )
+        .padding(20)
+        .background(
+            background,
+            in: RoundedRectangle(cornerRadius: 24)
+        )
     }
 }
 
@@ -1257,7 +817,7 @@ private struct FacilityDiscoveryView: View {
     private var pins: [RemoteFacility] { Array(facilities.filter { $0.location != nil }.prefix(100)) }
 
     var body: some View {
-        Group {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -1268,7 +828,7 @@ private struct FacilityDiscoveryView: View {
                             Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
                                 .accessibilityLabel("검색어 지우기")
                         }
-                    }.padding(16).frame(minHeight: 56).background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
+                    }.padding(14).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
                     HStack {
                         Text("서울 기관").font(.headline)
                         Spacer()
@@ -1280,12 +840,12 @@ private struct FacilityDiscoveryView: View {
                     Map(coordinateRegion: $region, annotationItems: pins) { facility in
                         MapAnnotation(coordinate: CLLocationCoordinate2D(latitude: facility.latitude!, longitude: facility.longitude!)) {
                             Button { selected = facility } label: {
-                                Image(systemName: "mappin.circle.fill").font(.system(size: 20))
+                                Image(systemName: "mappin.circle.fill").font(.system(size: 28))
                                     .foregroundStyle(Theme.accent).background(.white, in: Circle())
                                     .frame(width: 44, height: 44)
                             }.buttonStyle(.plain).accessibilityLabel(facility.name)
                         }
-                    }.frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 24))
+                    }.frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 8))
                         .accessibilityLabel("기관 위치 지도")
                     HStack {
                         Button {
@@ -1312,7 +872,7 @@ private struct FacilityDiscoveryView: View {
                         Text(errorMessage).foregroundStyle(.secondary)
                         Button("다시 시도") { Task { await load(page: 0, reset: true) } }
                     }
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: 0) {
                         ForEach(facilities) { facility in
                             NavigationLink(value: facility) {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -1322,14 +882,14 @@ private struct FacilityDiscoveryView: View {
                                         Image(systemName: "chevron.right").font(.caption)
                                     }
                                     Text(facility.facilityType).font(.caption).foregroundStyle(Theme.accent)
-                                    Text(facility.address).font(AppTypography.font(13)).foregroundStyle(.secondary)
+                                    Text(facility.address).font(.subheadline).foregroundStyle(.secondary)
                                     if let distance = facility.distanceKm {
                                         Text("직선거리 \(distance, specifier: "%.1f")km").font(.caption).foregroundStyle(.secondary)
                                     }
                                     if facility.location == nil { Text("위치 정보 없음").font(.caption).foregroundStyle(.secondary) }
-                                }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
-                                    .background(.white, in: RoundedRectangle(cornerRadius: 24))
+                                }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 16)
                             }.buttonStyle(.plain)
+                            Divider()
                         }
                     }
                     if loading { ProgressView().frame(maxWidth: .infinity).padding() }
@@ -1367,6 +927,7 @@ private struct FacilityDiscoveryView: View {
         defer { if requestID == token { loading = false } }
         do {
             if debounce { try await Task.sleep(nanoseconds: 350_000_000) }
+            #if DEBUG && targetEnvironment(simulator)
             let response = try await APIService.shared.getFacilities(search: search, category: category, center: center, radius: radius, page: page)
             try Task.checkCancellation()
             guard requestID == token, key == requestKey else { return }
@@ -1379,6 +940,9 @@ private struct FacilityDiscoveryView: View {
             nextPage = response.nextPage
             categories = response.categories
             if reset && center == nil { fitMap() }
+            #else
+            throw APIError.serverUnavailable
+            #endif
         } catch is CancellationError {
         } catch {
             guard requestID == token, key == requestKey, !Task.isCancelled else { return }
@@ -1586,18 +1150,11 @@ private struct FacilityDetailView: View {
     }
 }
 private struct DiscoveryPlace: Identifiable {
-
-    let id: String
-    let title: String
-    let address: String
-    let coordinate: CLLocationCoordinate2D
-
-    init(item: MKMapItem) {
-        id = UUID().uuidString
-        title = item.name ?? "검색한 장소"
-        address = item.placemark.title ?? ""
-        coordinate = item.placemark.coordinate
-    }
+    let id = UUID()
+    let item: MKMapItem
+    var coordinate: CLLocationCoordinate2D { item.placemark.coordinate }
+    var title: String { item.name ?? "검색한 장소" }
+    var address: String { item.placemark.title ?? "주소 정보 없음" }
 }
 
 @MainActor
@@ -1607,245 +1164,55 @@ private final class DiscoveryPlaceSearch: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var finished = false
     @Published private(set) var error: String?
-    @Published private(set) var selectedID: String?
-
-    @Published private(set) var nearbyFacilities: [DiscoveryPlace] = []
-    @Published private(set) var nearbyLoading = false
-    @Published private(set) var nearbyError: String?
-
+    @Published private(set) var selectedID: UUID?
     private var request: MKLocalSearch?
-    private var nearbyRequest: MKLocalSearch?
     private var generation = UUID()
 
     func cancel() {
         generation = UUID()
         request?.cancel()
         request = nil
-
-        nearbyRequest?.cancel()
-        nearbyRequest = nil
-
         loading = false
         finished = false
         error = nil
         places = []
         selectedID = nil
     }
-    func reset() {
-        cancel()
-
-        nearbyFacilities = []
-        nearbyLoading = false
-        nearbyError = nil
-    }
+    func reset() { cancel() }
 
     func search(_ text: String) async {
-
         cancel()
-
         let token = generation
-
-        let keyword = text.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-
-        guard !keyword.isEmpty else {
-            finished = true
-            return
-        }
-
         loading = true
-        error = nil
-
+        let configuration = MKLocalSearch.Request()
+        configuration.naturalLanguageQuery = text
+        configuration.region = region
+        configuration.resultTypes = [.address, .pointOfInterest]
+        let operation = MKLocalSearch(request: configuration)
+        request = operation
         do {
-
-            let configuration = MKLocalSearch.Request()
-            configuration.naturalLanguageQuery = keyword
-            configuration.region = region
-            configuration.resultTypes = [.address, .pointOfInterest]
-            let operation = MKLocalSearch(request: configuration)
-            request = operation
             let response = try await operation.start()
-
-            guard
-                generation == token,
-                !Task.isCancelled
-            else {
-                return
+            guard generation == token, !Task.isCancelled else { return }
+            places = response.mapItems.filter { CLLocationCoordinate2DIsValid($0.placemark.coordinate) }.map { DiscoveryPlace(item: $0) }
+            if !places.isEmpty {
+                selectedID = places.first?.id
+                var bounds = response.boundingRegion
+                bounds.span.latitudeDelta = max(bounds.span.latitudeDelta, 0.008)
+                bounds.span.longitudeDelta = max(bounds.span.longitudeDelta, 0.008)
+                region = bounds
             }
-
-            places = response.mapItems
-                .filter { CLLocationCoordinate2DIsValid($0.placemark.coordinate) }
-                .map { DiscoveryPlace(item: $0) }
-            if !places.isEmpty { region = response.boundingRegion }
-
-            selectedID = nil
-
-        } catch is CancellationError {
-
-            return
-
         } catch {
-
-            guard
-                generation == token,
-                !Task.isCancelled
-            else {
-                return
+            guard generation == token, !Task.isCancelled else { return }
+            if let mapError = error as? MKError, mapError.code == .placemarkNotFound {
+                places = []
+            } else {
+                self.error = "장소를 검색하지 못했어요. 인터넷 연결을 확인하고 다시 시도해주세요."
             }
-
-            places = []
-
-            self.error =
-                "장소를 검색하지 못했어요. 다시 시도해 주세요."
         }
-
-        guard
-            generation == token,
-            !Task.isCancelled
-        else {
-            return
-        }
-
+        guard generation == token, !Task.isCancelled else { return }
         loading = false
         finished = true
         request = nil
-    }
-    func searchNearbyFacilities(
-        around place: DiscoveryPlace
-    ) async {
-
-        nearbyRequest?.cancel()
-        nearbyRequest = nil
-
-        nearbyFacilities = []
-        nearbyError = nil
-        nearbyLoading = true
-
-        let center = place.coordinate
-
-        let searchRegion = MKCoordinateRegion(
-            center: center,
-            latitudinalMeters: 6000,
-            longitudinalMeters: 6000
-        )
-
-        let keywords = [
-            "체육센터",
-            "헬스장",
-            "요가",
-            "필라테스",
-            "수영장",
-            "체육관"
-        ]
-
-        var collected: [DiscoveryPlace] = []
-
-        for keyword in keywords {
-
-            guard !Task.isCancelled else {
-                nearbyLoading = false
-                return
-            }
-
-            let configuration = MKLocalSearch.Request()
-
-            configuration.naturalLanguageQuery = keyword
-            configuration.region = searchRegion
-            configuration.resultTypes = .pointOfInterest
-
-            let operation = MKLocalSearch(
-                request: configuration
-            )
-
-            nearbyRequest = operation
-
-            do {
-                let response = try await operation.start()
-
-                for item in response.mapItems {
-
-                    let coordinate = item.placemark.coordinate
-
-                    guard CLLocationCoordinate2DIsValid(
-                        coordinate
-                    ) else {
-                        continue
-                    }
-
-                    let origin = CLLocation(
-                        latitude: center.latitude,
-                        longitude: center.longitude
-                    )
-
-                    let target = CLLocation(
-                        latitude: coordinate.latitude,
-                        longitude: coordinate.longitude
-                    )
-
-                    let distance = origin.distance(
-                        from: target
-                    )
-
-                    // 선택 지역 기준 3km 이내만 사용
-                    guard distance <= 3000 else {
-                        continue
-                    }
-
-
-                    let place = DiscoveryPlace(item: item)
-
-                    let duplicate = collected.contains {
-                        $0.title == place.title &&
-                        abs(
-                            $0.coordinate.latitude -
-                            place.coordinate.latitude
-                        ) < 0.0001 &&
-                        abs(
-                            $0.coordinate.longitude -
-                            place.coordinate.longitude
-                        ) < 0.0001
-                    }
-
-                    if !duplicate {
-                        collected.append(place)
-                    }
-                }
-
-            } catch {
-                if Task.isCancelled {
-                    nearbyLoading = false
-                    return
-                }
-            }
-        }
-
-        let origin = CLLocation(
-            latitude: center.latitude,
-            longitude: center.longitude
-        )
-
-        nearbyFacilities = collected.sorted {
-
-            let left = CLLocation(
-                latitude: $0.coordinate.latitude,
-                longitude: $0.coordinate.longitude
-            )
-
-            let right = CLLocation(
-                latitude: $1.coordinate.latitude,
-                longitude: $1.coordinate.longitude
-            )
-
-            return origin.distance(from: left)
-                < origin.distance(from: right)
-        }
-
-        nearbyLoading = false
-
-        if nearbyFacilities.isEmpty {
-            nearbyError = "주변 운동시설을 찾지 못했어요."
-        }
     }
 
     func select(_ place: DiscoveryPlace) {
@@ -1856,136 +1223,67 @@ private final class DiscoveryPlaceSearch: ObservableObject {
 
 private struct DiscoveryMapResults: View {
     @ObservedObject var search: DiscoveryPlaceSearch
-
     let retry: () -> Void
     let select: () -> Void
     let usePlace: (DiscoveryPlace) -> Void
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-
-            if search.loading {
-                HStack {
-                    Spacer()
-
-                    ProgressView("지역 검색 중…")
-                        .font(.subheadline)
-
-                    Spacer()
-                }
-                .padding(.vertical, 24)
-
-            } else if let error = search.error {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(error)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Button("다시 검색") {
-                        retry()
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                Map(coordinateRegion: $search.region, annotationItems: search.places) { place in
+                    MapAnnotation(coordinate: place.coordinate) {
+                        Button { select(); search.select(place) } label: {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.system(size: search.selectedID == place.id ? 38 : 30))
+                                .foregroundStyle(search.selectedID == place.id ? Color.orange : Theme.accent)
+                                .background(.white, in: Circle()).frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).accessibilityLabel(place.title)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.accent)
-                }
-                .padding(.vertical, 12)
-
-            } else if search.finished && search.places.isEmpty {
-                Text("검색어와 일치하는 지역이나 장소가 없어요.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 12)
-
-            } else {
-                ForEach(search.places) { place in
-                    VStack(spacing: 0) {
-
-                        Button {
-                            select()
-                            search.select(place)
-                        } label: {
-                            HStack(spacing: 12) {
-
-                                Image(systemName: "mappin.and.ellipse")
-                                    .font(.system(size: 18))
-                                    .foregroundStyle(Theme.accent)
-                                    .frame(width: 32, height: 32)
-
-                                VStack(
-                                    alignment: .leading,
-                                    spacing: 4
-                                ) {
-                                    Text(place.title)
-                                        .font(
-                                            AppTypography.font(
-                                                15,
-                                                weight: .medium
-                                            )
-                                        )
-                                        .foregroundStyle(Theme.ink)
-
-                                    if !place.address.isEmpty {
-                                        Text(place.address)
-                                            .font(
-                                                AppTypography.font(12)
-                                            )
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                }
-
-                                Spacer()
-
+                }.frame(height: max(160, min(300, geometry.size.height * 0.48)))
+                    .accessibilityLabel("장소 검색 결과 지도")
+                if search.loading || (!search.finished && search.error == nil) {
+                    ProgressView("장소 검색 중…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error = search.error {
+                    VStack(spacing: 16) {
+                        Text(error).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Button("다시 검색", action: retry)
+                    }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if search.places.isEmpty {
+                    Text("검색 결과가 없어요. 다른 지역명이나 주소로 검색해주세요.")
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HStack { Text("장소 검색 결과").font(.headline); Spacer(); Text("\(search.places.count)곳").foregroundStyle(Theme.accent) }.padding(16)
+                    ScrollViewReader { proxy in
+                        List(search.places) { place in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button { select(); search.select(place) } label: {
+                                    HStack(alignment: .top) {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(place.title).font(.headline).foregroundStyle(Theme.ink)
+                                            Text(place.address).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        Spacer()
+                                        if search.selectedID == place.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
+                                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
                                 if search.selectedID == place.id {
-                                    Image(
-                                        systemName: "checkmark.circle.fill"
-                                    )
-                                    .foregroundStyle(Theme.accent)
-                                } else {
-                                    Image(
-                                        systemName: "chevron.right"
-                                    )
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    Button { place.item.openInMaps(launchOptions: nil) } label: { Label("지도 앱에서 열기", systemImage: "arrow.up.right.square") }
+                                        .font(.footnote).buttonStyle(.borderless)
                                 }
+                            }.padding(.vertical, 6).id(place.id)
+                        }.listStyle(.plain)
+                            .onChange(of: search.selectedID) { id in
+                                if let id { withAnimation { proxy.scrollTo(id, anchor: .top) } }
                             }
-                            .frame(
-                                maxWidth: .infinity,
-                                alignment: .leading
-                            )
-                            .padding(.vertical, 12)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if search.selectedID == place.id {
-                            Button {
-                                usePlace(place)
-                            } label: {
-                                Text("이 지역에서 프로그램 찾기")
-                                    .font(
-                                        AppTypography.font(
-                                            14,
-                                            weight: .semibold
-                                        )
-                                    )
-                                    .foregroundStyle(.white)
-                                    .frame(
-                                        maxWidth: .infinity,
-                                        minHeight: 48
-                                    )
-                                    .background(
-                                        Theme.accent,
-                                        in: RoundedRectangle(
-                                            cornerRadius: 14
-                                        )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.bottom, 12)
-                        }
-
-                        Divider()
                     }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let place = search.places.first(where: { $0.id == search.selectedID }) {
+                    VStack(spacing: 8) {
+                        Text(place.title).font(.subheadline).lineLimit(2)
+                        FlowAction(title: "이 지역에서 프로그램 찾기") { usePlace(place) }
+                    }.padding(16).background(.white)
                 }
             }
         }
