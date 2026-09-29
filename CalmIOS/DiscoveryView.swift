@@ -454,29 +454,31 @@ private struct ProgramDiscoveryView: View {
                         Divider()
                     }
                 }
-                Divider()
-                HStack(spacing: 8) {
-                    Text("프로그램")
-                        .font(AppTypography.font(16, weight: .bold))
+                if placeSearch.places.isEmpty {
+                    Divider()
+                    HStack(spacing: 8) {
+                        Text("프로그램")
+                            .font(AppTypography.font(16, weight: .bold))
 
-                    Text("\(searchedPrograms.count)건")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.accent)
+                        Text("\(searchedPrograms.count)건")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.accent)
 
-                    Spacer()
-                }
+                        Spacer()
+                    }
 
-                if searchedPrograms.isEmpty {
-                    Text("검색어와 일치하는 프로그램이 없어요.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                } else {
-                    ForEach(searchedPrograms) { program in
-                        NavigationLink(value: program) {
-                            DiscoveryProgramCard(program: program)
+                    if searchedPrograms.isEmpty {
+                        Text("검색어와 일치하는 프로그램이 없어요.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(searchedPrograms) { program in
+                            NavigationLink(value: program) {
+                                DiscoveryProgramCard(program: program)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -516,37 +518,7 @@ private struct ProgramDiscoveryView: View {
     }
 
     private var programSections: [ProgramSection] {
-        guard query.filter == .category || query.filter == .venue else {
-            return [
-                ProgramSection(
-                    id: "",
-                    programs: results
-                )
-            ]
-        }
-
-        let grouped = Dictionary(grouping: results) { program in
-            if query.filter == .category {
-                return program.category.isEmpty
-                    ? "미분류"
-                    : program.category
-            } else {
-                return program.facilityName.isEmpty
-                    ? "기관 정보 없음"
-                    : program.facilityName
-            }
-        }
-
-        return grouped.keys
-            .sorted {
-                $0.localizedStandardCompare($1) == .orderedAscending
-            }
-            .map { name in
-                ProgramSection(
-                    id: name,
-                    programs: grouped[name] ?? []
-                )
-            }
+        return [ProgramSection(id: "", programs: results)]
     }
 
     private var programList: some View {
@@ -601,18 +573,15 @@ private struct ProgramDiscoveryView: View {
                             Text(loadError).foregroundStyle(.secondary)
                             Button("다시 시도") { Task { await loadPrograms(reset: true) } }
                         }
-                        if nextCursor != nil && !loading {
+                        if nextCursor != nil && !loading && !results.isEmpty {
                             Button("더 보기") { Task { await loadPrograms(reset: false) } }
                         }
                         if results.isEmpty && !loading && loadError == nil {
-                            VStack(spacing: 12) {
-                                Text(query.center == nil ? "조건에 맞는 활동이 없어요." : "선택한 지역과 거리 안에 등록된 프로그램이 없어요.")
-                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                                if query.center != nil {
-                                    Button("다른 지역 검색") { query.text = selectedArea; searchFocused = true }
-                                }
-                                Button("필터 초기화") { let center = query.center; query = DiscoveryQuery(); query.center = center; if center != nil { query.radius = 3; query.filter = .nearby } }
-                            }.padding(.vertical, 40)
+                            Text("조건에 맞는 활동이 없어요.")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .multilineTextAlignment(.center)
+                                .padding(.vertical, 40)
                         }
                     }.padding(24)
                 }.refreshable { await loadPrograms(reset: true) }

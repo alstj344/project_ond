@@ -470,18 +470,9 @@ struct HomeView: View {
     private var schedule: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(isBrowsing ? "운동일정 미리보기" : "나의 일정").font(AppTypography.font(16, weight: .bold))
-                if isBrowsing {
-                    Spacer()
-                    Text("예시화면").font(AppTypography.font(10)).foregroundStyle(Theme.accent)
-                        .padding(.horizontal, 12).padding(.vertical, 5).background(Theme.mint.opacity(0.4), in: Capsule())
-                } else {
-                    Text(selectedDate, format: .dateTime.month().day()).font(.caption2).foregroundStyle(secondary)
-                }
-            }
-            if isBrowsing {
-                Text("예약한 프로그램을 달력에서 확인할 수 있어요.")
-                    .font(AppTypography.font(11)).foregroundStyle(secondary)
+                Text("나의 일정").font(AppTypography.font(16, weight: .bold))
+                Spacer()
+                Text(selectedDate, format: .dateTime.month().day()).font(.caption2).foregroundStyle(secondary)
             }
             HStack(spacing: 2) {
                 Button { moveWeek(-1) } label: { Image(systemName: "chevron.left") }
@@ -510,14 +501,7 @@ struct HomeView: View {
                 Text(scheduleError).font(.footnote).foregroundStyle(.secondary)
                 Button("다시 시도") { Task { await refreshHome() } }
             }
-            if isBrowsing {
-                HStack {
-                    Text("릴랙스 요가(예시)")
-                    Spacer()
-                    Text("10:00–10:45").foregroundStyle(secondary)
-                }.font(AppTypography.font(12)).padding(16)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 14))
-            } else if daily.isEmpty && scheduleError == nil {
+            if daily.isEmpty && scheduleError == nil {
                 Text("예정된 일정이 없어요.").font(.footnote).foregroundStyle(secondary).padding(.vertical, 12)
             }
             ForEach(daily) { booking in
