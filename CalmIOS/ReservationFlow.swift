@@ -548,7 +548,7 @@ struct ProgramDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                if program.isYoga {
+                if isYoga {
                     Color.clear.frame(height: 222)
                         .overlay {
                             GeometryReader { geometry in
@@ -570,7 +570,7 @@ struct ProgramDetailView: View {
                         infoSection("운동정보") {
                             HStack(spacing: 0) {
                                 metric("종목", value: program.category) {
-                                    if program.isYoga {
+                                    if isYoga {
                                         Image("DetailRectangle30").renderingMode(.template)
                                             .resizable().scaledToFit().foregroundStyle(iconTint)
                                             .frame(width: 35, height: 37.333)
@@ -599,7 +599,7 @@ struct ProgramDetailView: View {
                                 bullet("당일 컨디션에 맞춰 쉬어가도 괜찮아요.")
                             }
                         }
-                        if program.isYoga {
+                        if isYoga {
                             infoSection("편의시설 및 서비스") {
                                 HStack(spacing: 0) {
                                     facility("DetailFrame46", "키오스크", width: 22.201, height: 37.935)
