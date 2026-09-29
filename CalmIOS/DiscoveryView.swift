@@ -122,6 +122,7 @@ private struct ProgramDiscoveryView: View {
     @State private var searchRevision = 0
     @State private var selectedArea = ""
     @State private var selectedPlaceID: UUID?
+    @State private var reviewCounts: [String: Int] = [:]
     private var searchText: String {
         query.text
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -521,6 +522,7 @@ private struct ProgramDiscoveryView: View {
                                 NavigationLink(value: program) {
                                     DiscoveryProgramCard(
                                         program: program,
+                                        reviewCount: reviewCounts[program.id] ?? program.reviewCount,
                                         distanceKilometers: query.filter != .nearby ? nil : query.center.flatMap { center in
                                             program.location.map { center.kilometers(to: $0) }
                                         }
@@ -571,12 +573,33 @@ private struct ProgramDiscoveryView: View {
                 programs += page.programs.filter { !ids.contains($0.id) }
             }
             nextCursor = page.nextCursor
+            await loadReviewCounts(for: page.programs)
         } catch is CancellationError {
         } catch { loadError = "프로그램과 운동 조건을 불러오지 못했어요. 다시 시도해 주세요." }
+    }
+
+    @MainActor private func loadReviewCounts(for programs: [RemoteProgram]) async {
+        let pending = programs.filter { $0.reviewCount == nil && reviewCounts[$0.id] == nil }
+        guard !pending.isEmpty else { return }
+        let counts = await withTaskGroup(of: (String, Int)?.self, returning: [String: Int].self) { group in
+            for program in pending {
+                group.addTask {
+                    guard let response = try? await APIService.shared.getProgramReviews(programId: program.programId) else { return nil }
+                    return (program.id, response.reviewCount)
+                }
+            }
+            var values: [String: Int] = [:]
+            for await result in group {
+                if let (id, count) = result { values[id] = count }
+            }
+            return values
+        }
+        reviewCounts.merge(counts) { _, latest in latest }
     }
 }
 struct DiscoveryProgramCard: View {
     let program: RemoteProgram
+    var reviewCount: Int? = nil
     var distanceKilometers: Double? = nil
     var background: Color = .white
 
@@ -608,7 +631,7 @@ struct DiscoveryProgramCard: View {
                 .frame(width: 10, height: 16)
             }
 
-            if !program.category.isEmpty || distanceKilometers != nil || !program.participationType.isEmpty || program.reviewCount != nil {
+            if !program.category.isEmpty || distanceKilometers != nil || !program.participationType.isEmpty || reviewCount != nil {
                 HStack(spacing: 8) {
                     if !program.category.isEmpty {
                         Text(program.category)
@@ -640,7 +663,7 @@ struct DiscoveryProgramCard: View {
 
                     Spacer(minLength: 0)
 
-                    if let reviewCount = program.reviewCount {
+                    if let reviewCount {
                         HStack(spacing: 4) {
                             Image(systemName: "bubble.left.fill")
                             Text("\(reviewCount)")
