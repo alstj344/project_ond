@@ -544,6 +544,7 @@ struct ProgramDetailView: View {
         return newest ? Array(values.reversed()) : values
     }
     private let sampleReview = "요가를 처음 해봐서 동작을 못 따라갈까 걱정했는데, 어려운 동작은 하지 않아도 된다고 먼저 안내해 주셔서 마음이 편했어요. 사람도 많지 않고 다른 참여자와 이야기할 일이 거의 없어서 제 동작에만 집중할 수 있었어요."
+    private var isYoga: Bool { program.category == "요가" }
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -781,7 +782,7 @@ struct ReservationSummaryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         HStack {
-                            Text(booking.isCancelled ? "예약이 취소되었습니다." : booking.attendance == .checkedOut ? "참여가 완료되었습니다." : booking.attendance == .checkedIn ? "체크인되었습니다." : "예약이 확정되었습니다.")
+                            Text(statusTitle(for: booking))
                             Spacer()
                             if let date = booking.reservedAt { Text(date, format: .dateTime.year().month().day()).font(AppTypography.font(10)) }
                         }.padding(16).background(Theme.mint.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
@@ -805,7 +806,7 @@ struct ReservationSummaryView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             Text("시간   \(booking.dateLabel) \(booking.time)")
                             Text("장소   \(booking.venue)")
-                            Text(booking.displayProgram.isYoga ? "강사   이지원 선생님" : "강사   기관 문의")
+                            Text(booking.displayProgram.category == "요가" ? "강사   이지원 선생님" : "강사   기관 문의")
                         }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(.white, in: RoundedRectangle(cornerRadius: 20))
                         Button("화장실 위치 · 안전시설 안내") { inform("시설의 상세 위치 정보는 아직 등록되지 않았습니다. 방문 시 현장 안내를 확인해주세요.") }
                             .foregroundStyle(.secondary).frame(maxWidth: .infinity)
@@ -838,6 +839,14 @@ struct ReservationSummaryView: View {
             }
     }
     private func inform(_ value: String) { message = value; showMessage = true }
+    private func statusTitle(for booking: WellnessBooking) -> String {
+        if booking.isCancelled { return "예약이 취소되었습니다." }
+        switch booking.attendance {
+        case .checkedOut: return "참여가 완료되었습니다."
+        case .checkedIn: return "체크인되었습니다."
+        case .reserved: return "예약이 확정되었습니다."
+        }
+    }
     private func utility(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { utilityLabel(icon, title) }.buttonStyle(.plain)
     }
