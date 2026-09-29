@@ -65,6 +65,7 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
     let price: Int?
     let capacity: Int?
     let reservedCount: Int?
+    let reviewCount: Int?
     let imageURL: String?
     let latitude: Double?
     let longitude: Double?
@@ -72,7 +73,7 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
         case instructorName, participationGuide, amenities, isTestData
         case scheduleText, durationMinutes, instructorBio, instructorSpecialty
         case bookingAvailable, bookingUnavailableReason
-        case id, programId, programName, title, facilityName, description, exerciseType, difficulty, participationType, facilityId, instructorId, startAt, endAt, price, capacity, reservedCount, imageURL, latitude, longitude
+        case id, programId, programName, title, facilityName, description, exerciseType, difficulty, participationType, facilityId, instructorId, startAt, endAt, price, capacity, reservedCount, reviewCount, imageURL, latitude, longitude
     }
 
     init(from decoder: Decoder) throws {
@@ -104,6 +105,7 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
         price = try values.decodeIfPresent(Int.self, forKey: .price)
         capacity = try values.decodeIfPresent(Int.self, forKey: .capacity)
         reservedCount = try values.decodeIfPresent(Int.self, forKey: .reservedCount)
+        reviewCount = try values.decodeIfPresent(Int.self, forKey: .reviewCount)
         imageURL = try values.decodeIfPresent(String.self, forKey: .imageURL)
         latitude = try values.decodeIfPresent(Double.self, forKey: .latitude)
         longitude = try values.decodeIfPresent(Double.self, forKey: .longitude)

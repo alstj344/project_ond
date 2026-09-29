@@ -620,7 +620,7 @@ struct DiscoveryProgramCard: View {
     var background: Color = .white
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     if !program.facilityName.isEmpty {
@@ -633,22 +633,9 @@ struct DiscoveryProgramCard: View {
                         .font(AppTypography.font(14, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let date = program.startDate {
-                        Text(
-                            date,
-                            format: .dateTime
-                                .month()
-                                .day()
-                                .hour()
-                                .minute()
-                        )
+                    Text(scheduleLabel)
                         .font(AppTypography.font(12))
                         .foregroundStyle(.secondary)
-                    } else if !program.scheduleText.isEmpty {
-                        Text(program.scheduleText)
-                            .font(AppTypography.font(12))
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Spacer(minLength: 0)
@@ -660,7 +647,7 @@ struct DiscoveryProgramCard: View {
                 .frame(width: 10, height: 16)
             }
 
-            if !program.category.isEmpty || program.price != nil {
+            if !program.category.isEmpty || distanceKilometers != nil || !program.participationType.isEmpty || program.reviewCount != nil {
                 HStack(spacing: 8) {
                     if !program.category.isEmpty {
                         Text(program.category)
@@ -684,14 +671,21 @@ struct DiscoveryProgramCard: View {
                         Text("소그룹").font(AppTypography.font(10)).foregroundStyle(.secondary)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(Theme.surface, in: Capsule())
+                    } else if let participation = participationLabel {
+                        Text(participation).font(AppTypography.font(10)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Theme.surface, in: Capsule())
                     }
 
                     Spacer(minLength: 0)
 
-                    if program.price != nil {
-                        Text(program.priceLabel)
-                            .font(AppTypography.font(11))
-                            .foregroundStyle(.secondary)
+                    if let reviewCount = program.reviewCount {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bubble.left.fill")
+                            Text("\(reviewCount)")
+                        }
+                        .font(AppTypography.font(10))
+                        .foregroundStyle(Theme.accent)
                     }
                 }
             }
@@ -703,8 +697,31 @@ struct DiscoveryProgramCard: View {
         .padding(20)
         .background(
             background,
-            in: RoundedRectangle(cornerRadius: 24)
+            in: RoundedRectangle(cornerRadius: 20)
         )
+    }
+
+    private var scheduleLabel: String {
+        guard let start = program.startDate else { return program.scheduleText }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "Asia/Seoul")
+        formatter.dateFormat = "M월 d일(E) HH:mm"
+        var value = formatter.string(from: start)
+        if let end = program.endDate, end > start {
+            formatter.dateFormat = "HH:mm"
+            value += "-" + formatter.string(from: end)
+        }
+        return value
+    }
+
+    private var participationLabel: String? {
+        switch program.participationType {
+        case "SOLO": return "개인"
+        case "ONE_ON_ONE": return "1:1"
+        case "GROUP", "ALL": return "그룹"
+        default: return nil
+        }
     }
 }
 
