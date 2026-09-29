@@ -75,6 +75,11 @@ struct CalmApp: App {
     init() {
         FirebaseApp.configure()
         AppTypography.register()
+        #if DEBUG
+        // 개발/심사용 새 실행은 초기 진입부터 확인할 수 있도록 한 번만 세션을 초기화합니다.
+        try? Auth.auth().signOut()
+        UserDefaults.standard.set(false, forKey: "calm.onboardingCompleted")
+        #endif
         _session = StateObject(
             wrappedValue: FirebaseSession()
         )

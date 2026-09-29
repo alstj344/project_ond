@@ -131,17 +131,6 @@ private struct ProgramDiscoveryView: View {
         !searchText.isEmpty
     }
 
-    private var searchedPrograms: [RemoteProgram] {
-        guard !searchText.isEmpty else {
-            return []
-        }
-
-        return programs.filter { program in
-            program.title.localizedCaseInsensitiveContains(searchText)
-            || program.category.localizedCaseInsensitiveContains(searchText)
-            || program.facilityName.localizedCaseInsensitiveContains(searchText)
-        }
-    }
     private var results: [RemoteProgram] {
         programs.filter { program in
             if query.filter == .nearby, let center = query.center {
@@ -454,34 +443,6 @@ private struct ProgramDiscoveryView: View {
                         Divider()
                     }
                 }
-                if placeSearch.places.isEmpty {
-                    Divider()
-                    HStack(spacing: 8) {
-                        Text("프로그램")
-                            .font(AppTypography.font(16, weight: .bold))
-
-                        Text("\(searchedPrograms.count)건")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.accent)
-
-                        Spacer()
-                    }
-
-                    if searchedPrograms.isEmpty {
-                        Text("검색어와 일치하는 프로그램이 없어요.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
-                    } else {
-                        ForEach(searchedPrograms) { program in
-                            NavigationLink(value: program) {
-                                DiscoveryProgramCard(program: program)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
             }
             .padding(24)
         }
@@ -593,7 +554,7 @@ private struct ProgramDiscoveryView: View {
         loadError = nil
         defer { loading = false }
         do {
-            if reset {
+            if reset {ㅇㄷㄴㅌ
                 preferences = nil
                 conditions = nil
                 if Auth.auth().currentUser != nil {

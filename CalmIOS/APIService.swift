@@ -381,7 +381,7 @@ final class APIService {
             throw APIError.invalidResponse
         }
 
-        return result.reservations
+        return result.reservations.filter { $0.program?.isTestData != true }
     }
 
 
@@ -672,7 +672,9 @@ final class APIService {
             throw APIError.invalidResponse
         }
 
-        return page
+        return ProgramPage(success: page.success,
+                           programs: page.programs.filter { !$0.isTestData },
+                           nextCursor: page.nextCursor)
     }
     func getNearbyPrograms(
         center: ProgramLocation,
@@ -748,7 +750,7 @@ final class APIService {
             throw APIError.invalidResponse
         }
 
-        return result.programs
+        return result.programs.filter { !$0.isTestData }
     }
 
     func searchPrograms(
@@ -818,7 +820,7 @@ final class APIService {
             throw APIError.invalidResponse
         }
 
-        return result.programs
+        return result.programs.filter { !$0.isTestData }
     }
 
 

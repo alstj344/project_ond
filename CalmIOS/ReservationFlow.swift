@@ -30,13 +30,6 @@ enum CancellationReason: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-extension DiscoveryProgram {
-    static let yoga = DiscoveryProgram(id: "small-group-yoga", venue: "마음숲 웰니스 스페이스 3층",
-        title: "초보자 소그룹 릴랙스 요가", date: "8월 31일(월)", day: 31, time: "19:00-19:50",
-        category: "요가", minutes: 5, kilometers: 0.4, smallGroup: true, reviews: 2, price: 0)
-    var isYoga: Bool { category == "요가" }
-}
-
 struct FlowAction: View {
     let title: String
     var secondary = false
@@ -57,7 +50,7 @@ struct ProgramLibraryView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    ForEach([DiscoveryProgram.yoga] + DiscoveryProgram.samples) { program in
+                    ForEach(DiscoveryProgram.samples) { program in
                         NavigationLink(value: program) { ProgramCard(program: program) }.buttonStyle(.plain)
                     }
                 }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
