@@ -142,6 +142,8 @@ struct HomeView: View {
     @State private var recommendations: [RemoteProgram] = []
     @State private var recommendationError: String?
     @State private var remoteReservations: [RemoteReservation] = []
+    @State private var reservationRefreshID = UUID()
+    @State private var scheduleError: String?
     private let secondary = Color(red: 113 / 255, green: 121 / 255, blue: 115 / 255)
 
     var body: some View {
@@ -272,6 +274,15 @@ struct HomeView: View {
         .tint(Theme.accent)
         .environment(\.symbolVariants, .none)
         .task { await refreshHome() }
+        .onReceive(NotificationCenter.default.publisher(for: .ondReservationsChanged)) { notification in
+            guard let uid = notification.userInfo?["uid"] as? String,
+                  uid == Auth.auth().currentUser?.uid else { return }
+            if let date = notification.userInfo?["date"] as? Date { selectedDate = date }
+            if let id = notification.userInfo?["cancelledID"] as? String {
+                remoteReservations.removeAll { $0.id == id }
+            }
+            Task { await refreshHome() }
+        }
         .onChange(of: tab) { value in
             if value == .home { Task { await refreshHome() } }
         }
@@ -299,7 +310,11 @@ struct HomeView: View {
             Button("확인", role: .cancel) { medicalError = nil }
         } message: { Text(medicalError ?? "") }
         .id(navigationIdentity)
-        .environment(\.returnHome, { tab = .home; navigationIdentity = UUID() })
+        .environment(\.returnHome, {
+            tab = .home
+            navigationIdentity = UUID()
+            Task { await refreshHome() }
+        })
         .environment(\.showBookings, { tab = .bookings })
         .fullScreenCover(isPresented: $showLogin) { AuthView(mode: authMode) }
     }
@@ -318,19 +333,31 @@ struct HomeView: View {
     }
 
     private var upcomingReservation: RemoteReservation? {
-        remoteReservations.filter { $0.status == "RESERVED" && ($0.program?.startDate ?? .distantPast) >= Date() }
+        remoteReservations.filter { reservation in
+            guard reservation.status == "RESERVED", let program = reservation.program else { return false }
+            let end = program.endDate ?? program.startDate ?? .distantPast
+            return end >= Date()
+        }
             .sorted { ($0.program?.startDate ?? .distantFuture) < ($1.program?.startDate ?? .distantFuture) }.first
     }
 
     @MainActor private func refreshHome() async {
-        guard !isBrowsing, let uid = Auth.auth().currentUser?.uid else { return }
-        await profile.refresh()
+        guard let uid = Auth.auth().currentUser?.uid else { remoteReservations = []; return }
+        let requestID = UUID()
+        reservationRefreshID = requestID
+        scheduleError = nil
         do {
             let reservations = try await APIService.shared.getMyReservations()
+            guard reservationRefreshID == requestID else { return }
             guard Auth.auth().currentUser?.uid == uid else { remoteReservations = []; return }
             remoteReservations = reservations
         } catch is CancellationError {
-        } catch { recommendationError = "예약 내역은 예약 탭에서 다시 확인해 주세요." }
+        } catch {
+            if reservationRefreshID == requestID {
+                scheduleError = "예약 일정을 불러오지 못했어요. 다시 시도해 주세요."
+            }
+        }
+        await profile.refresh()
     }
 
     private func remoteReservationCard(_ reservation: RemoteReservation, program: RemoteProgram) -> some View {
@@ -457,12 +484,14 @@ struct HomeView: View {
                     .font(AppTypography.font(11)).foregroundStyle(secondary)
             }
             HStack(spacing: 2) {
+                Button { moveWeek(-1) } label: { Image(systemName: "chevron.left") }
+                    .accessibilityLabel("이전 주").frame(minWidth: 24, minHeight: 44)
                 ForEach(weekDates, id: \.self) { date in
                     let selected = Calendar.current.isDate(date, inSameDayAs: selectedDate)
                     Button { selectedDate = date } label: {
                         VStack(spacing: 8) {
                             Text(date, format: .dateTime.weekday(.narrow)).font(.caption2)
-                            Text(date, format: .dateTime.day()).font(.footnote.weight(.semibold))
+                            Text(String(Calendar.current.component(.day, from: date))).font(.footnote.weight(.semibold))
                             Image(systemName: "figure.mind.and.body").font(.system(size: 15))
                                 .opacity(reservations(on: date).isEmpty ? 0 : 1)
                         }
@@ -473,8 +502,14 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
+                Button { moveWeek(1) } label: { Image(systemName: "chevron.right") }
+                    .accessibilityLabel("다음 주").frame(minWidth: 24, minHeight: 44)
             }
             let daily = reservations(on: selectedDate)
+            if let scheduleError, !isBrowsing {
+                Text(scheduleError).font(.footnote).foregroundStyle(.secondary)
+                Button("다시 시도") { Task { await refreshHome() } }
+            }
             if isBrowsing {
                 HStack {
                     Text("릴랙스 요가(예시)")
@@ -482,7 +517,7 @@ struct HomeView: View {
                     Text("10:00–10:45").foregroundStyle(secondary)
                 }.font(AppTypography.font(12)).padding(16)
                     .background(.white, in: RoundedRectangle(cornerRadius: 14))
-            } else if daily.isEmpty {
+            } else if daily.isEmpty && scheduleError == nil {
                 Text("예정된 일정이 없어요.").font(.footnote).foregroundStyle(secondary).padding(.vertical, 12)
             }
             ForEach(daily) { booking in
@@ -507,8 +542,14 @@ struct HomeView: View {
 
     private var weekDates: [Date] {
         let calendar = Calendar.current
-        let start = calendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+        let start = calendar.dateInterval(of: .weekOfYear, for: selectedDate)?.start ?? selectedDate
         return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    private func moveWeek(_ offset: Int) {
+        if let date = Calendar.current.date(byAdding: .weekOfYear, value: offset, to: selectedDate) {
+            selectedDate = date
+        }
     }
 
     private func reservations(on date: Date) -> [RemoteReservation] {

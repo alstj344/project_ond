@@ -209,6 +209,8 @@ private struct ProfileArrow: View {
 }
 
 struct MyPageView: View {
+    @StateObject private var session = FirebaseSession()
+    @State private var showLogin = false
     @Environment(\.showBookings) private var showBookings
     @ObservedObject var store: WellnessStore
     @ObservedObject var profile: ProfileStore
@@ -241,6 +243,7 @@ struct MyPageView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if session.userID != nil {
                     NavigationLink { InfoSummaryView(profile: profile) } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 6) {
@@ -251,20 +254,26 @@ struct MyPageView: View {
                             ProfileArrow()
                         }.padding(16).frame(minHeight: 74).background(.white, in: RoundedRectangle(cornerRadius: 16))
                     }.buttonStyle(.plain)
+                    }
                     stats
                     Text("의료 연계 및 안심 설정")
                         .font(AppTypography.font(16, weight: .bold)).padding(.horizontal, 8).padding(.top, 16)
                     medical
                     support
                     HStack(spacing: 8) {
+                        if session.userID != nil {
                         Button("로그아웃") { actionSheet = .logout }
                         Text("·")
                         Button("회원탈퇴") { actionSheet = .deleteAccount }
+                        } else {
+                            Button("로그인") { showLogin = true }
+                        }
                     }.font(AppTypography.font(12)).foregroundStyle(ProfileStyle.pale)
                         .frame(maxWidth: .infinity, minHeight: 44).padding(.top, 4)
                 }.padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 16)
                     .frame(maxWidth: 600).frame(maxWidth: .infinity)
             }.modifier(ProfilePageChrome(title: "마이페이지", detail: false))
+                .fullScreenCover(isPresented: $showLogin) { AuthView(mode: .login) }
                 .alert("안내", isPresented: $showNotice) { Button("확인", role: .cancel) {} } message: { Text(notice) }
                 .sheet(item: $actionSheet) { action in
                     ProfileActionSheet(action: action, onCancel: { actionSheet = nil }, onConfirm: {

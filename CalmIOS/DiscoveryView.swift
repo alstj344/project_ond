@@ -144,14 +144,14 @@ private struct ProgramDiscoveryView: View {
     }
     private var results: [RemoteProgram] {
         programs.filter { program in
-            if let center = query.center {
+            if query.filter == .nearby, let center = query.center {
                 guard let location = program.location, center.kilometers(to: location) <= query.radius else { return false }
             }
             switch query.filter {
             case .category: return query.category == "전체" || query.category == program.category
             case .venue: return query.venue == "전체" || query.venue == program.facilityName
 
-            case .group: return !query.smallGroupOnly || program.participationType == "SMALL_GROUP"
+            case .group: return true
             case .free: return program.price == 0
             case .paid: return program.price.map { $0 > 0 } ?? false
             default: return true
@@ -162,7 +162,7 @@ private struct ProgramDiscoveryView: View {
                 let b = right.matchScore(preferences: preferences, conditions: conditions)
                 if a != b { return a > b }
             }
-            if query.sort == .distance, let center = query.center {
+            if query.filter == .nearby, query.sort == .distance, let center = query.center {
                 let a = left.location.map { center.kilometers(to: $0) } ?? .infinity
                 let b = right.location.map { center.kilometers(to: $0) } ?? .infinity
                 if a != b { return a < b }
@@ -194,6 +194,9 @@ private struct ProgramDiscoveryView: View {
                 await loadPrograms(reset: true)
             }
 
+            .onChange(of: query.filter) { filter in
+                if filter != .nearby && query.sort == .distance { query.sort = .date }
+            }
             .onChange(of: query.text) { _ in
                 placeSearch.cancel()
             }
@@ -265,7 +268,32 @@ private struct ProgramDiscoveryView: View {
                     }
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(DiscoveryFilter.allCases, id: \.self) { filter in
+                            ForEach(DiscoveryFilter.allCases.filter { $0 != .group }, id: \.self) { filter in
+                                if filter == .category {
+                                    Menu {
+                                        Button("전체") { query.filter = .category; query.category = "전체" }
+                                        ForEach(programCategories, id: \.self) { category in
+                                            Button(category) { query.filter = .category; query.category = category }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 4) { Text("종목별"); Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)) }
+                                            .font(AppTypography.font(12)).padding(.horizontal, 16).frame(minHeight: 38)
+                                            .background(query.filter == .category ? Theme.mint.opacity(0.6) : Theme.background, in: Capsule())
+                                            .overlay(Capsule().strokeBorder(query.filter == .category ? Theme.accent.opacity(0.5) : .clear))
+                                    }.tint(Theme.ink)
+                                } else if filter == .venue {
+                                    Menu {
+                                        Button("전체") { query.filter = .venue; query.venue = "전체" }
+                                        ForEach(programVenues, id: \.self) { venue in
+                                            Button(venue) { query.filter = .venue; query.venue = venue }
+                                        }
+                                    } label: {
+                                        HStack(spacing: 4) { Text("기관별"); Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)) }
+                                            .font(AppTypography.font(12)).padding(.horizontal, 16).frame(minHeight: 38)
+                                            .background(query.filter == .venue ? Theme.mint.opacity(0.6) : Theme.background, in: Capsule())
+                                            .overlay(Capsule().strokeBorder(query.filter == .venue ? Theme.accent.opacity(0.5) : .clear))
+                                    }.tint(Theme.ink)
+                                } else {
                                 Button { query.filter = filter } label: {
                                     HStack(spacing: 4) {
                                         Text(filter.rawValue)
@@ -276,10 +304,11 @@ private struct ProgramDiscoveryView: View {
                                         .background(query.filter == filter ? Theme.mint.opacity(0.6) : Theme.background, in: Capsule())
                                         .overlay(Capsule().strokeBorder(query.filter == filter ? Theme.accent.opacity(0.5) : .clear))
                                 }.buttonStyle(.plain).accessibilityAddTraits(query.filter == filter ? .isSelected : [])
+                                }
                             }
                         }
                     }
-                    if query.filter == .nearby || query.center != nil {
+                    if query.filter == .nearby {
                         VStack(spacing: 12) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(query.center == nil ? "지역을 검색해 주세요" : "선택 지역 기준 거리").font(.headline)
@@ -294,126 +323,12 @@ private struct ProgramDiscoveryView: View {
                                 .font(.caption2).foregroundStyle(.secondary)
                         }.padding(16).background(Theme.surface, in: RoundedRectangle(cornerRadius: 20))
                     }
-                    if query.filter == .category {
-                        Menu {
-                            Button("전체") {
-                                query.category = "전체"
-                            }
-                            ForEach(programCategories, id: \.self) { category in
-                                Button(category) {
-                                    query.category = category
-                                }
-                            }
-                        } label: {
-                            HStack {
-                                Text(
-                                    query.category == "전체"
-                                        ? "종목 선택"
-                                        : query.category
-                                    )
-                                    .font(
-                                        AppTypography.font(
-                                            15,
-                                            weight: .medium
-                                        )
-                                    )
-                                    .foregroundStyle(.primary)
-                                    Spacer()
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 16)
-                                .frame(minHeight: 52)
-                                .background(
-                                    Theme.surface,
-                                    in: RoundedRectangle(cornerRadius: 16)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        if query.filter == .venue {
-                            Menu {
-                                Button("전체") {
-                                    query.venue = "전체"
-                                }
-
-                                ForEach(programVenues, id: \.self) { venue in
-                                    Button(venue) {
-                                        query.venue = venue
-                                    }
-                                }
-                            } label: {
-                                HStack {
-                                    Text(
-                                        query.venue == "전체"
-                                            ? "기관 선택"
-                                            : query.venue
-                                    )
-                                    .font(
-                                        AppTypography.font(
-                                            15,
-                                            weight: .medium
-                                        )
-                                    )
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-
-                                    Spacer()
-
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 16)
-                                .frame(minHeight: 52)
-                                .background(
-                                    Theme.surface,
-                                    in: RoundedRectangle(cornerRadius: 16)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    if query.filter == .group {
-                        Picker("참여 인원", selection: $query.smallGroupOnly) {
-                            Text("전체").tag(false)
-                            Text("소그룹").tag(true)
-                        }.pickerStyle(.segmented)
-                    }
                     }
                 }.padding(24).background(.white, in: RoundedRectangle(cornerRadius: 24))
     }
     private var searchResultsView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-
-                HStack(spacing: 8) {
-                    Text("프로그램")
-                        .font(AppTypography.font(16, weight: .bold))
-
-                    Text("\(searchedPrograms.count)건")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.accent)
-
-                    Spacer()
-                }
-
-                if searchedPrograms.isEmpty {
-                    Text("검색어와 일치하는 프로그램이 없어요.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                } else {
-                    ForEach(searchedPrograms) { program in
-                        NavigationLink(value: program) {
-                            DiscoveryProgramCard(program: program)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Divider()
-                    .padding(.vertical, 4)
 
                 Text("지역 및 장소")
                     .font(AppTypography.font(16, weight: .bold))
@@ -539,6 +454,32 @@ private struct ProgramDiscoveryView: View {
                         Divider()
                     }
                 }
+                Divider()
+                HStack(spacing: 8) {
+                    Text("프로그램")
+                        .font(AppTypography.font(16, weight: .bold))
+
+                    Text("\(searchedPrograms.count)건")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.accent)
+
+                    Spacer()
+                }
+
+                if searchedPrograms.isEmpty {
+                    Text("검색어와 일치하는 프로그램이 없어요.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(searchedPrograms) { program in
+                        NavigationLink(value: program) {
+                            DiscoveryProgramCard(program: program)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
             }
             .padding(24)
         }
@@ -618,7 +559,7 @@ private struct ProgramDiscoveryView: View {
                             Spacer()
                             Picker("정렬", selection: $query.sort) {
                                 Text("일정순").tag(ProgramSort.date)
-                                if query.center != nil { Text("거리순").tag(ProgramSort.distance) }
+                                if query.filter == .nearby && query.center != nil { Text("거리순").tag(ProgramSort.distance) }
                             }.pickerStyle(.menu).font(.caption)
                         }
                         ForEach(programSections) { section in
@@ -647,7 +588,7 @@ private struct ProgramDiscoveryView: View {
                                 NavigationLink(value: program) {
                                     DiscoveryProgramCard(
                                         program: program,
-                                        distanceKilometers: query.center.flatMap { center in
+                                        distanceKilometers: query.filter != .nearby ? nil : query.center.flatMap { center in
                                             program.location.map { center.kilometers(to: $0) }
                                         }
                                     )

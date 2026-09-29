@@ -149,6 +149,11 @@ struct RemoteProgram: Decodable, Identifiable, Hashable {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.date(from: startAt) ?? ISO8601DateFormatter().date(from: startAt)
     }
+    var endDate: Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: endAt) ?? ISO8601DateFormatter().date(from: endAt)
+    }
 }
 
 struct ProgramPage: Decodable {

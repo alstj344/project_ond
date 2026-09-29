@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 import CoreText
 import UIKit
 
@@ -263,11 +264,9 @@ struct RemoteProgramDetailView: View {
             isPresented: $showReservation
         ) {
             if let createdReservation {
-                RemoteReservationDetailView(
+                RemoteReservationResultView(
                     reservation: createdReservation
-                ) {
-                    self.createdReservation = nil
-                }
+                ) {}
             }
         }
     }
@@ -374,7 +373,7 @@ struct RemoteProgramDetailView: View {
     @MainActor
     private func reserve() async {
 
-        guard !isReserving, program.bookingAvailable else {
+        guard !isReserving, program.bookingAvailable, let uid = Auth.auth().currentUser?.uid else {
             return
         }
 
@@ -391,6 +390,7 @@ struct RemoteProgramDetailView: View {
                         programId: program.programId
                     )
 
+            guard Auth.auth().currentUser?.uid == uid else { return }
             createdReservation = RemoteReservation(
                 id: result.id,
                 programId: result.programId,
@@ -400,6 +400,9 @@ struct RemoteProgramDetailView: View {
                 program: program
             )
 
+            var change: [String: Any] = ["uid": uid]
+            if let date = program.startDate { change["date"] = date }
+            NotificationCenter.default.post(name: .ondReservationsChanged, object: nil, userInfo: change)
             showReservation = true
 
         } catch let error as APIError {
@@ -1291,186 +1294,272 @@ private struct RemoteReservationCard: View {
     }
 }
 
+extension Notification.Name {
+    static let ondReservationsChanged = Notification.Name("ond.reservations.changed")
+}
+
 struct RemoteReservationDetailView: View {
     let reservation: RemoteReservation
     let onChanged: () -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var isCancelling = false
-    @State private var showCancelConfirmation = false
-    @State private var didCancel = false
-    @State private var showError = false
-    @State private var errorMessage = ""
-
-    private var program: RemoteProgram? {
-        reservation.program
-    }
+    @Environment(\.returnHome) private var returnHome
+    @State private var cancelling = false
+    @State private var cancelledReservation: RemoteReservation?
+    @State private var notice = ""
+    @State private var showNotice = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                statusCard
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(program?.title ?? "프로그램")
-                        .font(AppTypography.font(22, weight: .bold, relativeTo: .title2))
-
-                    if let category = program?.category {
-                        Text(category)
-                            .font(AppTypography.font(12, weight: .medium))
-                            .foregroundStyle(Theme.accent)
+                Label(reservation.status == "RESERVED" ? "예약이 확정되었습니다." : "예약이 취소되었습니다.",
+                      systemImage: "checkmark.circle.fill")
+                    .font(AppTypography.font(12)).foregroundStyle(Theme.accent)
+                    .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.mint.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+                if let program = reservation.program {
+                    VStack(spacing: 20) {
+                        NavigationLink { RemoteProgramDetailView(program: program) } label: {
+                            HStack {
+                                Text(program.title).font(AppTypography.font(20, weight: .bold))
+                                Spacer()
+                                Image(systemName: "chevron.right").foregroundStyle(Theme.muted)
+                            }
+                        }.buttonStyle(.plain)
+                        HStack {
+                            Button { notice = "등록된 예약 문의 연락처가 없어요."; showNotice = true } label: {
+                                confirmationAction("예약 문의", icon: "phone.fill")
+                            }
+                            Divider().frame(height: 36)
+                            Button { notice = "등록된 주소가 없어요. 프로그램 상세의 장소 정보를 확인해 주세요."; showNotice = true } label: {
+                                confirmationAction("주소 복사", icon: "mappin.circle.fill")
+                            }
+                            Divider().frame(height: 36)
+                            NavigationLink { RemoteProgramDetailView(program: program) } label: {
+                                confirmationAction("작성된 후기", icon: "bubble.left.fill")
+                            }
+                        }.buttonStyle(.plain).padding(16)
+                            .background(Theme.background, in: RoundedRectangle(cornerRadius: 16))
+                    }.padding(20).background(.white, in: RoundedRectangle(cornerRadius: 24))
+                    VStack(alignment: .leading, spacing: 12) {
+                        confirmationRow("시간", value: program.startDate?.formatted(.dateTime.month().day().hour().minute()) ?? program.scheduleText)
+                        confirmationRow("장소", value: program.facilityName)
+                        confirmationRow("강사", value: program.instructorName)
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 24))
+                    Button {
+                        notice = program.amenities.isEmpty ? "등록된 편의시설 및 안전시설 안내가 없어요." : program.amenities.joined(separator: " · ")
+                        showNotice = true
+                    } label: {
+                        Text("화장실 위치 · 안전시설 안내").font(AppTypography.font(12))
+                            .foregroundStyle(Theme.muted).frame(maxWidth: .infinity)
                     }
+                } else {
+                    Text("프로그램 정보를 불러올 수 없어요.").foregroundStyle(.secondary)
                 }
-
-                VStack(alignment: .leading, spacing: 16) {
-                    if let startDate = program?.startDate {
-                        detailRow(
-                            title: "일시",
-                            value: startDate.formatted(
-                                .dateTime
-                                    .year()
-                                    .month()
-                                    .day()
-                                    .hour()
-                                    .minute()
-                            )
-                        )
-                    }
-
-                    if let program {
-                        detailRow(
-                            title: "참여 형태",
-                            value: program.participationType
-                        )
-
-                        detailRow(
-                            title: "난이도",
-                            value: program.difficulty
-                        )
-
-                        detailRow(
-                            title: "가격",
-                            value: program.priceLabel
-                        )
-                    }
-
-                    detailRow(
-                        title: "예약 상태",
-                        value: reservation.status == "RESERVED"
-                            ? "예약 확정"
-                            : "예약 취소"
-                    )
+                if reservation.status == "RESERVED" {
+                    Button("예약 취소") { cancelling = true }
+                        .font(AppTypography.font(13)).frame(maxWidth: .infinity)
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    .white,
-                    in: RoundedRectangle(cornerRadius: 20)
-                )
-            }
-            .padding(24)
-            .frame(maxWidth: 600)
-            .frame(maxWidth: .infinity)
+            }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
         }
         .background(Theme.background.ignoresSafeArea())
-        .navigationTitle("예약 확인")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("예약 확인").navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom) {
-            if reservation.status == "RESERVED" {
-                FlowAction(
-                    title: isCancelling ? "취소 중..." : "예약 취소"
-                ) {
-                    showCancelConfirmation = true
+            FlowAction(title: "확인", action: returnHome).padding(24).background(Theme.background)
+        }
+        .alert("안내", isPresented: $showNotice) { Button("확인", role: .cancel) {} } message: { Text(notice) }
+        .sheet(isPresented: $cancelling, onDismiss: {
+            // Present the result only after the cancellation sheet has closed.
+        }) {
+            RemoteReservationCancellationSheet(reservation: reservation) {
+                cancelledReservation = RemoteReservation(id: reservation.id, programId: reservation.programId,
+                    status: "CANCELLED", createdAt: reservation.createdAt, cancelledAt: nil, program: reservation.program)
+                if let uid = Auth.auth().currentUser?.uid {
+                    NotificationCenter.default.post(name: .ondReservationsChanged, object: nil,
+                        userInfo: ["uid": uid, "cancelledID": reservation.id])
                 }
-                .disabled(isCancelling)
-                .opacity(isCancelling ? 0.6 : 1)
-                .padding(24)
-                .background(Theme.background)
+                onChanged()
+                cancelling = false
             }
         }
-        .sheet(isPresented: $showCancelConfirmation, onDismiss: {
-            if didCancel { onChanged(); dismiss() }
-        }) {
-            CancelReservationView(title: program?.title ?? "프로그램",
-                detail: program?.startDate?.formatted(.dateTime.month().day().hour().minute()) ?? "",
-                isSubmitting: isCancelling, errorMessage: showError ? errorMessage : nil) { reason in
+        .navigationDestination(isPresented: Binding(
+            get: { cancelledReservation != nil && !cancelling },
+            set: { if !$0 { cancelledReservation = nil } }
+        )) {
+            if let cancelledReservation {
+                RemoteReservationResultView(reservation: cancelledReservation, onChanged: onChanged)
+            }
+        }
+    }
+
+    private func confirmationAction(_ title: String, icon: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 26)).foregroundStyle(Theme.accent)
+            Text(title).font(AppTypography.font(10)).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, minHeight: 64)
+    }
+    private func confirmationRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(title).foregroundStyle(.secondary)
+            Text(value.isEmpty ? "등록된 정보가 없어요." : value)
+        }.font(AppTypography.font(12))
+    }
+}
+
+private struct RemoteReservationCancellationSheet: View {
+    let reservation: RemoteReservation
+    let onSuccess: () -> Void
+    @State private var submitting = false
+    @State private var errorMessage: String?
+    var body: some View {
+        CancelReservationView(title: reservation.program?.title ?? "예약한 프로그램",
+            detail: reservation.program?.startDate?.formatted(.dateTime.month().day().hour().minute()) ?? reservation.program?.scheduleText ?? "",
+            isSubmitting: submitting, errorMessage: errorMessage) { reason in
+                Task { @MainActor in
+                    guard !submitting, let uid = Auth.auth().currentUser?.uid else { return }
+                    submitting = true
+                    errorMessage = nil
+                    defer { submitting = false }
+                    do {
+                        try await APIService.shared.cancelReservation(programId: reservation.programId, reason: reason.rawValue)
+                        guard Auth.auth().currentUser?.uid == uid else { return }
+                        onSuccess()
+                    } catch let error as APIError { errorMessage = error.userMessage }
+                    catch { errorMessage = "예약을 취소하지 못했어요. 다시 시도해 주세요." }
+                }
+            }.interactiveDismissDisabled(submitting)
+    }
+}
+
+struct RemoteReservationResultView: View {
+    let reservation: RemoteReservation
+    let onChanged: () -> Void
+    @Environment(\.returnHome) private var returnHome
+    @State private var isCancelling = false
+    @State private var showCancelConfirmation = false
+    @State private var didCancel = false
+    @State private var errorMessage: String?
+    private var cancelled: Bool { didCancel || reservation.status == "CANCELLED" }
+    private var program: RemoteProgram? { reservation.program }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                SuccessIcon().padding(.top, cancelled ? 100 : 64).padding(.bottom, 28)
+                VStack(spacing: 12) {
+                    Text(cancelled ? "예약이 취소되었습니다." : "예약이 완료되었어요.")
+                        .font(AppTypography.font(24, weight: .bold))
+                    Text(cancelled ? "변경한 정보는 바로 반영되었어요." : "편안한 마음으로 참여하실 수 있도록 준비했어요.")
+                        .font(AppTypography.font(13)).foregroundStyle(Theme.muted)
+                }.multilineTextAlignment(.center)
+                if !cancelled, let date = receiptDate {
+                    (Text(date, format: .dateTime.month().day().hour().minute()) + Text(" 접수"))
+                        .font(AppTypography.font(11)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(Theme.mint.opacity(0.6), in: Capsule())
+                        .accessibilityLabel("접수 시간 \(date.formatted())")
+                }
+                if cancelled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(program?.title ?? "예약한 프로그램").font(AppTypography.font(16, weight: .semibold))
+                            Spacer()
+                            Text("취소완료").font(AppTypography.font(11))
+                                .foregroundStyle(Color(red: 0.65, green: 0.28, blue: 0.16))
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                                .background(Color(red: 1, green: 0.92, blue: 0.89), in: Capsule())
+                        }
+                        Text(schedule).font(AppTypography.font(12)).foregroundStyle(.secondary)
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 18)).padding(.top, 24)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("수업에 전달된 운동 안내").font(AppTypography.font(13, weight: .semibold))
+                            Text("별도로 전달된 개인 운동 안내는 확인되지 않았어요. 아래 프로그램 참여 안내를 확인해 주세요.")
+                                .font(AppTypography.font(12)).foregroundStyle(.secondary)
+                            if let program {
+                                ForEach(Array(program.participationGuide.enumerated()), id: \.offset) { _, text in
+                                    Text(text).font(AppTypography.font(12)).foregroundStyle(.secondary)
+                                }
+                            }
+                        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 18))
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("당일 컨디션에 맞춰 편하게 참여하세요.")
+                                .font(AppTypography.font(13, weight: .semibold))
+                            Text("당일 몸이나 마음이 무겁게 느껴진다면, 무리하지 않아도 괜찮아요. 취소 가능 여부는 프로그램의 예약 안내를 확인해 주세요.")
+                                .font(AppTypography.font(12))
+                        }.foregroundStyle(Theme.accent).padding(20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.mint.opacity(0.35), in: RoundedRectangle(cornerRadius: 18))
+                    }.padding(.top, 24)
+                }
+            }.padding(24).frame(maxWidth: 600).frame(maxWidth: .infinity)
+        }
+        .background(Theme.background.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 8) {
+                Button { finish() } label: {
+                    Text("확인").font(AppTypography.font(16, weight: .medium))
+                        .frame(maxWidth: cancelled ? .infinity : 110, minHeight: 56)
+                        .foregroundStyle(cancelled ? .white : Theme.accent)
+                        .background(cancelled ? Theme.accent : Theme.surface, in: Capsule())
+                }
+                if !cancelled && reservation.status == "RESERVED" {
+                    Button { showCancelConfirmation = true } label: {
+                        Text("예약 취소").font(AppTypography.font(16, weight: .medium))
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .foregroundStyle(.white).background(Theme.accent, in: Capsule())
+                    }.disabled(isCancelling)
+                }
+            }.buttonStyle(.plain).padding(24).background(Theme.background)
+        }
+        .sheet(isPresented: $showCancelConfirmation) {
+            CancelReservationView(title: program?.title ?? "예약한 프로그램", detail: schedule,
+                isSubmitting: isCancelling, errorMessage: errorMessage) { reason in
                     Task { await cancelReservation(reason: reason) }
                 }
         }
     }
 
-    private var statusCard: some View {
-        HStack {
-            Image(
-                systemName:
-                    reservation.status == "RESERVED"
-                    ? "checkmark.circle.fill"
-                    : "xmark.circle.fill"
-            )
-            .foregroundStyle(
-                reservation.status == "RESERVED"
-                ? Theme.accent
-                : .secondary
-            )
-
-            Text(
-                reservation.status == "RESERVED"
-                ? "예약이 확정되었습니다."
-                : "예약이 취소되었습니다."
-            )
-            .font(AppTypography.font(14, weight: .semibold))
-
-            Spacer()
-        }
-        .padding(16)
-        .background(
-            Theme.mint.opacity(0.5),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
+    private var receiptDate: Date? {
+        guard let value = reservation.createdAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
-    private func detailRow(title: String, value: String) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            Text(title)
-                .font(AppTypography.font(13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
-
-            Text(value.isEmpty ? "-" : value)
-                .font(AppTypography.font(13))
-                .foregroundStyle(.primary)
-
-            Spacer()
+    private func finish() {
+        if didCancel, let uid = Auth.auth().currentUser?.uid {
+            NotificationCenter.default.post(name: .ondReservationsChanged, object: nil,
+                userInfo: ["uid": uid, "cancelledID": reservation.id])
+            onChanged()
         }
+        returnHome()
     }
 
-    @MainActor
-    private func cancelReservation(reason: CancellationReason) async {
-        guard !isCancelling else {
-            return
-        }
+    private var schedule: String {
+        program?.startDate?.formatted(.dateTime.year().month().day().hour().minute())
+            ?? program?.scheduleText ?? "등록된 일정이 없어요."
+    }
 
+    @MainActor private func cancelReservation(reason: CancellationReason) async {
+        guard !isCancelling, !cancelled, let uid = Auth.auth().currentUser?.uid else { return }
         isCancelling = true
-        showError = false
-
-        defer {
-            isCancelling = false
-        }
-
+        errorMessage = nil
+        defer { isCancelling = false }
         do {
-            try await APIService.shared.cancelReservation(
-                programId: reservation.programId, reason: reason.rawValue
-            )
-
+            try await APIService.shared.cancelReservation(programId: reservation.programId, reason: reason.rawValue)
+            guard Auth.auth().currentUser?.uid == uid else { return }
             didCancel = true
             showCancelConfirmation = false
         } catch let error as APIError {
             errorMessage = error.userMessage
-            showError = true
         } catch {
-            errorMessage = "예약을 취소하지 못했어요."
-            showError = true
+            errorMessage = "예약을 취소하지 못했어요. 다시 시도해 주세요."
         }
     }
 }

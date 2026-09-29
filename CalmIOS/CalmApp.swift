@@ -75,15 +75,6 @@ struct CalmApp: App {
     init() {
         FirebaseApp.configure()
         AppTypography.register()
-        #if DEBUG
-        // 테스트 실행 시 이전 Firebase 로그인 세션 제거
-        try? Auth.auth().signOut()
-        // 온보딩 완료 상태도 초기화
-        UserDefaults.standard.set(
-            false,
-            forKey: "calm.onboardingCompleted"
-        )
-        #endif
         _session = StateObject(
             wrappedValue: FirebaseSession()
         )
