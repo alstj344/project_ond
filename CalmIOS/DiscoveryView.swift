@@ -554,7 +554,7 @@ private struct ProgramDiscoveryView: View {
         loadError = nil
         defer { loading = false }
         do {
-            if reset {ㅇㄷㄴㅌ
+            if reset {
                 preferences = nil
                 conditions = nil
                 if Auth.auth().currentUser != nil {
