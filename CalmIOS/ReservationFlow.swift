@@ -366,7 +366,9 @@ struct RemoteProgramDetailView: View {
     @MainActor
     private func reserve() async {
 
-        guard !isReserving, program.bookingAvailable, let uid = Auth.auth().currentUser?.uid else {
+        guard !isReserving, program.bookingAvailable else { return }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            reservationError = APIError.notLoggedIn.userMessage
             return
         }
 
@@ -1535,11 +1537,6 @@ struct RemoteReservationResultView: View {
     }
 
     private func finish() {
-        if didCancel, let uid = Auth.auth().currentUser?.uid {
-            NotificationCenter.default.post(name: .ondReservationsChanged, object: nil,
-                userInfo: ["uid": uid, "cancelledID": reservation.id])
-            onChanged()
-        }
         returnHome()
     }
 
@@ -1558,6 +1555,9 @@ struct RemoteReservationResultView: View {
             guard Auth.auth().currentUser?.uid == uid else { return }
             didCancel = true
             showCancelConfirmation = false
+            NotificationCenter.default.post(name: .ondReservationsChanged, object: nil,
+                userInfo: ["uid": uid, "cancelledID": reservation.id])
+            onChanged()
         } catch let error as APIError {
             errorMessage = error.userMessage
         } catch {

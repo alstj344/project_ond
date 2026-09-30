@@ -116,4 +116,23 @@ missingLocation.location = nil
 nearby.center = DiscoveryProgram.samples[0].location!
 nearby.filter = .recommended
 assert(nearby.results([missingLocation]).isEmpty)
-print("PASS: reservation persistence, reviews, regional radius, distance sorting, category intersection and missing coordinates")
+Auth.shared.currentUser = Auth.User(uid: "test-a")
+let verifiedStore = WellnessStore(defaults: defaults)
+let receivedAt = Date(timeIntervalSince1970: 1_800_000_000)
+let verified = WellnessBooking(id: "verified-reservation", title: "Reserved class", venue: "Venue", day: 4,
+    time: "19:00", reservedAt: receivedAt, scheduledAt: receivedAt)
+verifiedStore.mergeVerifiedBookings([verified])
+assert(verifiedStore.bookings.map(\.id) == [verified.id], "Only server-verified reservations may enter the current history")
+assert(verifiedStore.transition(verified.id, to: .checkedIn))
+verifiedStore.mergeVerifiedBookings([verified])
+assert(verifiedStore.booking(verified.id)?.attendance == .checkedIn)
+verifiedStore.setMedicalRegistration(false)
+assert(verifiedStore.bookings.count == 1, "Real reservations do not depend on medical registration")
+var cancelled = verified
+cancelled.cancelledAt = receivedAt
+verifiedStore.mergeVerifiedBookings([cancelled])
+assert(!verifiedStore.transition(verified.id, to: .checkedOut))
+Auth.shared.currentUser = Auth.User(uid: "test-b")
+verifiedStore.mergeVerifiedBookings([verified])
+assert(verifiedStore.bookings.isEmpty, "A changed session cannot import another account's reservations")
+print("PASS: verified reservation ownership, cancellation, attendance persistence, reviews and discovery filters")

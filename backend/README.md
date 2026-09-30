@@ -1,5 +1,29 @@
 # OnD Express API
 
+## Final Project Entry Point (2026-09-30)
+
+Run `npm ci`, `npm test`, then `npm start` in this directory. The current entry
+point is `server.js`; the following older `src/` prototype notes are historical.
+The latest controllers, routes, tests and public facility catalogue are included.
+
+Use Application Default Credentials for project `project-ond`, database `ond-db`.
+Set `GOOGLE_APPLICATION_CREDENTIALS` to an existing key outside the repository,
+or use an authorized `gcloud auth application-default login`. No key is included.
+The default address is `127.0.0.1:3000`; the process health check is `GET /`.
+
+Profiles absent after Firebase signup are initialized using the verified token.
+Existing profile fields are preserved. Reservation ownership uses the existing
+`reservations.uid` field. Database errors are never treated as successful saves.
+Program pages use a five-minute cache; actual non-sample review counts are
+aggregated by programId with a ten-minute cache, not separately for every card.
+
+Programs marked `isTestData` are excluded from listings and reservation responses,
+and cannot be newly booked. There is no test-program seeder in runtime startup.
+Existing Firestore documents were not deleted while packaging this project.
+See `DEPLOYMENT.md` and the parent `PREDEPLOY-CHECKLIST.md` before release.
+
+## Historical Profile-Only Prototype
+
 Node 22+, Firebase project `project-ond`, Enterprise Native database `ond-db`.
 
 Run `npm ci`, then `npm test`. Tests use an injected token verifier and repository;

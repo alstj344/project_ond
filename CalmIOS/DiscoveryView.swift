@@ -486,6 +486,7 @@ private struct ProgramDiscoveryView: View {
     private var programList: some View {
         ScrollView {
                     VStack(spacing: 12) {
+                        if !results.isEmpty {
                         HStack {
                             Text(resultTitle)
                                 .font(AppTypography.font(16, weight: .bold))
@@ -495,6 +496,7 @@ private struct ProgramDiscoveryView: View {
                                 Text("일정순").tag(ProgramSort.date)
                                 if query.filter == .nearby && query.center != nil { Text("거리순").tag(ProgramSort.distance) }
                             }.pickerStyle(.menu).font(.caption)
+                        }
                         }
                         ForEach(programSections) { section in
 
@@ -559,6 +561,7 @@ private struct ProgramDiscoveryView: View {
             if reset {
                 preferences = nil
                 conditions = nil
+                reviewCounts = [:]
                 if Auth.auth().currentUser != nil {
                     if let data = try? await APIService.shared.getMyProfile() {
                         preferences = try? OnboardingPreferences.decodeResponse(data)
@@ -624,7 +627,6 @@ struct DiscoveryProgramCard: View {
                 .frame(width: 10, height: 16)
             }
 
-            if !program.category.isEmpty || distanceKilometers != nil || !program.participationType.isEmpty || reviewCount != nil {
                 HStack(spacing: 8) {
                     if !program.category.isEmpty {
                         Text(program.category)
@@ -656,17 +658,15 @@ struct DiscoveryProgramCard: View {
 
                     Spacer(minLength: 0)
 
-                    if let reviewCount {
-                        HStack(spacing: 4) {
-                            SafeAssetImage(name: "ReviewIcon", fallback: "bubble.left.fill")
-                                .frame(width: 13, height: 13)
-                            Text("\(reviewCount)")
-                        }
-                        .font(AppTypography.font(10))
-                        .foregroundStyle(Theme.accent)
+                    HStack(spacing: 4) {
+                        SafeAssetImage(name: "ReviewIcon", fallback: "bubble.left.fill")
+                            .frame(width: 13, height: 13)
+                        Text((reviewCount ?? program.reviewCount).map(String.init) ?? "-")
                     }
+                    .font(AppTypography.font(10))
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityLabel((reviewCount ?? program.reviewCount).map { "후기 \($0)개" } ?? "후기 수 확인 중")
                 }
-            }
         }
         .frame(
             maxWidth: .infinity,

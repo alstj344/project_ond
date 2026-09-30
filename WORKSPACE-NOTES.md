@@ -1,5 +1,17 @@
 # Workspace Layout
 
+## Final Workspace (2026-09-30)
+
+Open `CalmIOS.xcodeproj`. The matching API is now included in `backend/` and
+starts with `npm start` using `backend/server.js`. The latest server source,
+tests and public facility catalogue have been copied into this project.
+`backend/src/` preserves the older, inactive profile-only prototype.
+The project no longer depends on the old Desktop backend directory.
+The current branch and remote are retained; no push is performed.
+See `PREDEPLOY-CHECKLIST.md` for final verification and remaining prerequisites.
+
+## Historical Layout
+
 - `CalmIOS/`: iOS application source and assets.
 - `CalmIOS.xcodeproj/`: shared project configuration and resolved packages.
 - `Tests/`: focused Swift model checks.

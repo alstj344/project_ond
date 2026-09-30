@@ -1,5 +1,14 @@
 # Calm iOS
 
+## 최종 프로젝트 (2026-09-30)
+
+`CalmIOS.xcodeproj`를 Xcode에서 엽니다. 현재 앱에 대응하는 서버는 이 폴더의
+`backend/server.js`이며, `backend`에서 `npm ci` 후 `npm start`로 실행합니다.
+Firebase 서버 인증 설정은 `backend/README.md`를 따릅니다. 비밀 키는 포함하지 않습니다.
+시뮬레이터 Debug 기본 주소는 `http://localhost:3000`입니다. 기기/Release에는 실제
+HTTPS `ONDAPIBaseURL` 설정이 필요합니다. 최종 검증 결과와 미완료 사항은
+`PREDEPLOY-CHECKLIST.md`를 확인합니다. 아래 날짜별 기록은 당시 상태입니다.
+
 ## Firebase 연결 (2026-09-24)
 
 `project-ond`의 이메일·비밀번호 인증과 서울 `ond-db` Firestore에 연결했습니다.

@@ -1,7 +1,6 @@
 import SwiftUI
 import FirebaseCore
 import FirebaseAuth
-import FirebaseFirestore
 enum SignInNotice {
     static func message(for error: Error, createdAccount: Bool) -> String {
         if createdAccount {
@@ -45,28 +44,6 @@ final class FirebaseSession: ObservableObject {
     }
     deinit {
         if let listener { Auth.auth().removeStateDidChangeListener(listener) }
-    }
-    static func ensureUserDocument(_ user: User) async throws {
-        let database = Firestore.firestore(database: "ond-db")
-        let document = database.collection("users").document(user.uid)
-        let email = user.email ?? ""
-        // A transaction reads without the unsupported Listen stream.
-        _ = try await database.runTransaction { transaction, errorPointer in
-            do {
-                let snapshot = try transaction.getDocument(document)
-                if !snapshot.exists {
-                    transaction.setData([
-                        "email": email,
-                        "createdAt": FieldValue.serverTimestamp(),
-                        "updatedAt": FieldValue.serverTimestamp()
-                    ], forDocument: document)
-                }
-                return true
-            } catch {
-                errorPointer?.pointee = error as NSError
-                return nil
-            }
-        }
     }
 }
 @main
@@ -326,39 +303,16 @@ struct AuthView: View {
         guard validInput else { return }
         submitting = true
         var createdAccount = false
-        var stage = "Firebase Auth"
-        #if DEBUG
-        print("[Login] project_ond transaction-profile build")
-        #endif
         defer { submitting = false }
         do {
             let address = email.trimmingCharacters(in: .whitespacesAndNewlines)
             onboardingCompleted = false
             if mode == .signup {
-                let result = try await Auth.auth().createUser(withEmail: address, password: password)
+                _ = try await Auth.auth().createUser(withEmail: address, password: password)
                 createdAccount = true
-                stage = "Firestore profile"
-                // Firebase Auth 계정 생성이 성공한 뒤 프로필 문서 동기화가 일시적으로
-                // 실패해도 가입 자체를 실패로 처리하지 않습니다.
-                try? await FirebaseSession.ensureUserDocument(result.user)
                 showAgreement = true
             } else {
-                let result = try await Auth.auth().signIn(withEmail: address, password: password)
-                #if DEBUG
-                print("[Login] Firebase Auth succeeded")
-                #endif
-                stage = "Firestore profile"
-                try? await FirebaseSession.ensureUserDocument(result.user)
-                #if DEBUG
-                print("[Login] Firestore profile succeeded")
-                #endif
-                stage = "Express profile"
-                // 인증은 Firebase 세션으로 완료됩니다. Express 프로필 서버가
-                // 일시적으로 연결되지 않아도 로그인 화면에 머물지 않도록 합니다.
-                _ = try? await APIService.shared.getMyProfile()
-                #if DEBUG
-                print("[Login] Express profile succeeded")
-                #endif
+                _ = try await Auth.auth().signIn(withEmail: address, password: password)
                 // This local flag opens Home; it does not mark server onboarding complete.
                 onboardingCompleted = true
             }
@@ -366,7 +320,7 @@ struct AuthView: View {
         } catch {
             #if DEBUG
             let diagnostic = error as NSError
-            print("[Login] Failed at \(stage); domain=\(diagnostic.domain); code=\(diagnostic.code)")
+            print("[Login] domain=\(diagnostic.domain); code=\(diagnostic.code)")
             #endif
             errorMessage = SignInNotice.message(for: error, createdAccount: createdAccount)
             showResult = true

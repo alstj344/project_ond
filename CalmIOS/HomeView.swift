@@ -28,8 +28,9 @@ struct WellnessBooking: Identifiable, Codable {
     var participatedAt: Date?
     var cancelledAt: Date?
     var cancellationReason: String?
+    var scheduledAt: Date?
     var isCancelled: Bool { cancelledAt != nil }
-    var dateLabel: String { program?.date ?? "9월 \(day)일(\(["일", "월", "화", "수", "목", "금", "토"][(day - 1) % 7]))" }
+    var dateLabel: String { scheduledAt?.formatted(.dateTime.month().day().weekday()) ?? program?.date ?? "9월 \(day)일(\(["일", "월", "화", "수", "목", "금", "토"][(day - 1) % 7]))" }
     var displayProgram: DiscoveryProgram {
         program ?? DiscoveryProgram(id: id, venue: venue, title: title, date: dateLabel, day: day,
             time: time, category: id == "yoga" ? "요가" : id == "walk" ? "걷기" : "스트레칭",
@@ -43,6 +44,7 @@ final class WellnessStore: ObservableObject {
     private let defaults: UserDefaults
     private let ownerID: String?
     private let key: String
+    private var hasVerifiedBookings = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -53,6 +55,7 @@ final class WellnessStore: ObservableObject {
     }
 
     func setMedicalRegistration(_ registered: Bool) {
+        guard !hasVerifiedBookings else { return }
         let enabled = registered && ownerID != nil && ownerID == Auth.auth().currentUser?.uid
         guard schedulesEnabled != enabled else { return }
         schedulesEnabled = enabled
@@ -67,6 +70,26 @@ final class WellnessStore: ObservableObject {
     }
 
     func booking(_ id: String) -> WellnessBooking? { bookings.first { $0.id == id } }
+
+    func mergeVerifiedBookings(_ verified: [WellnessBooking]) {
+        guard ownerID != nil, ownerID == Auth.auth().currentUser?.uid else { bookings = []; return }
+        let saved = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([WellnessBooking].self, from: $0) } ?? []
+        bookings = verified.map { fresh in
+            var booking = fresh
+            if let previous = saved.first(where: { $0.id == fresh.id && $0.reservedAt == fresh.reservedAt }) {
+                booking.attendance = previous.attendance
+                booking.review = previous.review
+                booking.rating = previous.rating
+                booking.reflection = previous.reflection
+                booking.reviewedAt = previous.reviewedAt
+                booking.participatedAt = previous.participatedAt
+            }
+            return booking
+        }
+        hasVerifiedBookings = true
+        schedulesEnabled = true
+        save()
+    }
 
     @discardableResult
     func transition(_ id: String, to next: Attendance) -> Bool {
@@ -172,8 +195,6 @@ struct HomeView: View {
                                 signupCard
                             } else if let reservation = upcomingReservation, let program = reservation.program {
                                 remoteReservationCard(reservation, program: program)
-                            } else if let booking = store.bookings.first(where: { $0.attendance != .checkedOut && !$0.isCancelled }) {
-                                reservationCard(booking)
                             } else {
                                 Text("예정된 운동이 없어요.").padding(20)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -289,6 +310,8 @@ struct HomeView: View {
             if value == .home { Task { await refreshHome() } }
         }
         .onChange(of: session.userID) { _ in
+            remoteReservations = []
+            scheduleError = nil
             Task { await refreshHome() }
         }
         .task {
@@ -347,7 +370,12 @@ struct HomeView: View {
     }
 
     @MainActor private func refreshHome() async {
-        guard let uid = Auth.auth().currentUser?.uid else { remoteReservations = []; return }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            reservationRefreshID = UUID()
+            remoteReservations = []
+            scheduleError = nil
+            return
+        }
         let requestID = UUID()
         reservationRefreshID = requestID
         scheduleError = nil
@@ -356,6 +384,17 @@ struct HomeView: View {
             guard reservationRefreshID == requestID else { return }
             guard Auth.auth().currentUser?.uid == uid else { remoteReservations = []; return }
             remoteReservations = reservations
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            store.mergeVerifiedBookings(reservations.compactMap { reservation in
+                guard let program = reservation.program, let start = program.startDate else { return nil }
+                return WellnessBooking(id: reservation.id, title: program.title, venue: program.facilityName,
+                    day: Calendar.current.component(.day, from: start),
+                    time: start.formatted(.dateTime.hour().minute()),
+                    reservedAt: reservation.createdAt.flatMap { iso.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) },
+                    cancelledAt: reservation.status == "CANCELLED" ? (reservation.cancelledAt.flatMap { iso.date(from: $0) } ?? Date()) : nil,
+                    scheduledAt: start)
+            })
         } catch is CancellationError {
         } catch {
             if reservationRefreshID == requestID {
@@ -370,7 +409,7 @@ struct HomeView: View {
             HStack {
                 Text(program.title).font(AppTypography.font(16, weight: .semibold))
                 Spacer()
-                AttendanceBadge(status: .reserved)
+                AttendanceBadge(status: store.booking(reservation.id)?.attendance ?? .reserved)
             }
             if let date = program.startDate {
                 Text(date, format: .dateTime.month().day().weekday().hour().minute())
@@ -384,6 +423,13 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .foregroundStyle(.white).background(Theme.accent, in: Capsule())
             }.padding(.top, 4)
+            if let start = program.startDate, Calendar.current.isDateInToday(start),
+               (program.endDate ?? start) > Date(), let booking = store.booking(reservation.id) {
+                HStack(spacing: 8) {
+                    attendanceButton("조용히 체크인", booking: booking, next: .checkedIn, enabled: booking.attendance == .reserved)
+                    attendanceButton("조용히 나가기", booking: booking, next: .checkedOut, enabled: booking.attendance == .checkedIn)
+                }
+            }
         }.padding(20).background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 24))
     }
 
