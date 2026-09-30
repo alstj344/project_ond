@@ -202,6 +202,11 @@ struct ReviewListResponse: Decodable {
     let nextCursor: String?
 }
 
+struct ReviewCountsResponse: Decodable {
+    let success: Bool
+    let counts: [String: Int]
+}
+
 
 // MARK: - Reservation
 
@@ -615,66 +620,57 @@ final class APIService {
     func getPrograms(
         after: String? = nil
     ) async throws -> ProgramPage {
+        let cacheKey = "calm.programs.firstPage.v1"
 
-        guard var components = URLComponents(url: try endpoint("/api/programs"), resolvingAgainstBaseURL: false) else {
-            throw APIError.invalidURL
+        do {
+            guard var components = URLComponents(url: try endpoint("/api/programs"), resolvingAgainstBaseURL: false) else {
+                throw APIError.invalidURL
+            }
+
+            if let after {
+                components.queryItems = [URLQueryItem(name: "after", value: after)]
+            }
+
+            guard let url = components.url else { throw APIError.invalidURL }
+
+            let session = URLSession(
+                configuration: .ephemeral,
+                delegate: ProfileRedirectBlocker(),
+                delegateQueue: nil
+            )
+            defer { session.invalidateAndCancel() }
+
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw APIError.serverUnavailable
+            }
+
+            let page = try JSONDecoder().decode(ProgramPage.self, from: data)
+            guard page.success else { throw APIError.invalidResponse }
+            if after == nil { UserDefaults.standard.set(data, forKey: cacheKey) }
+
+            return ProgramPage(
+                success: true,
+                programs: page.programs.filter { !$0.isTestData },
+                nextCursor: page.nextCursor
+            )
+        } catch {
+            guard after == nil,
+                  let data = UserDefaults.standard.data(forKey: cacheKey),
+                  let cached = try? JSONDecoder().decode(ProgramPage.self, from: data),
+                  cached.success else {
+                throw error
+            }
+            return ProgramPage(
+                success: true,
+                programs: cached.programs.filter { !$0.isTestData },
+                nextCursor: cached.nextCursor
+            )
         }
-
-        if let after {
-            components.queryItems = [
-                URLQueryItem(
-                    name: "after",
-                    value: after
-                )
-            ]
-        }
-
-        guard let url = components.url else {
-            throw APIError.invalidURL
-        }
-
-        let session = URLSession(
-            configuration: .ephemeral,
-            delegate: ProfileRedirectBlocker(),
-            delegateQueue: nil
-        )
-
-        defer {
-            session.invalidateAndCancel()
-        }
-
-        var request = URLRequest(url: url)
-
-        request.timeoutInterval = 15
-
-        request.setValue(
-            "application/json",
-            forHTTPHeaderField: "Accept"
-        )
-
-        let (data, response) = try await session.data(
-            for: request
-        )
-
-        guard
-            let http = response as? HTTPURLResponse,
-            http.statusCode == 200
-        else {
-            throw APIError.serverUnavailable
-        }
-
-        let page = try JSONDecoder().decode(
-            ProgramPage.self,
-            from: data
-        )
-
-        guard page.success else {
-            throw APIError.invalidResponse
-        }
-
-        return ProgramPage(success: page.success,
-                           programs: page.programs.filter { !$0.isTestData },
-                           nextCursor: page.nextCursor)
     }
     func getNearbyPrograms(
         center: ProgramLocation,
@@ -834,6 +830,28 @@ final class APIService {
 
 
     // MARK: Review
+
+    func getProgramReviewCounts() async throws -> ReviewCountsResponse {
+        let url = try endpoint("/api/programs/review-counts")
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: ProfileRedirectBlocker(),
+            delegateQueue: nil
+        )
+        defer { session.invalidateAndCancel() }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.serverUnavailable
+        }
+        let result = try JSONDecoder().decode(ReviewCountsResponse.self, from: data)
+        guard result.success else { throw APIError.invalidResponse }
+        return result
+    }
 
     func getProgramReviews(
         programId: String, after: String? = nil

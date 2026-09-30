@@ -125,6 +125,7 @@ private enum HomeTab: String { case explore, home, bookings, profile }
 
 struct HomeView: View {
     var isBrowsing = false
+    @StateObject private var session = FirebaseSession()
     @State private var showLogin = false
     @State private var confirmMedicalTest = false
     @State private var registeringMedical = false
@@ -145,6 +146,7 @@ struct HomeView: View {
     @State private var reservationRefreshID = UUID()
     @State private var scheduleError: String?
     private let secondary = Color(red: 113 / 255, green: 121 / 255, blue: 115 / 255)
+    private var browsingMode: Bool { isBrowsing && session.userID == nil }
 
     var body: some View {
         TabView(selection: $tab) {
@@ -155,7 +157,7 @@ struct HomeView: View {
                             Image("HomeBrand").resizable().scaledToFit().frame(width: 44, height: 28)
                                 .foregroundStyle(Theme.accent).accessibilityLabel("마음걸음")
                             VStack(alignment: .leading, spacing: 0) {
-                                if isBrowsing {
+                                if browsingMode {
                                     Button { authMode = .login; showLogin = true } label: {
                                         Text("로그인 후,").underline()
                                     }.buttonStyle(.plain)
@@ -166,7 +168,7 @@ struct HomeView: View {
                             }
                                 .font(AppTypography.font(24, weight: .bold))
                                 .fixedSize(horizontal: false, vertical: true)
-                            if isBrowsing {
+                            if browsingMode {
                                 signupCard
                             } else if let reservation = upcomingReservation, let program = reservation.program {
                                 remoteReservationCard(reservation, program: program)
@@ -181,11 +183,11 @@ struct HomeView: View {
                             .frame(maxWidth: 600).frame(maxWidth: .infinity)
                             .background(Color(red: 147/255, green: 207/255, blue: 174/255))
                         VStack(spacing: 12) {
-                            if let error = profile.loadError, !isBrowsing {
+                            if let error = profile.loadError, !browsingMode {
                                 Text(error).foregroundStyle(.secondary)
                                 Button("다시 시도") { Task { await profile.refresh() } }
                             }
-                            if !isBrowsing && profile.medicalLoaded && !profile.hasMedicalTestData {
+                            if !browsingMode && profile.medicalLoaded && !profile.hasMedicalTestData {
                                 VStack(alignment: .leading, spacing: 12) {
                                     if profile.hasMedicalTestData {
                                         Label("의료 데이터 등록됨 · 테스트용", systemImage: "checkmark.circle")
@@ -203,7 +205,7 @@ struct HomeView: View {
                             }
                             monthlyProgress
                             schedule
-                            if isBrowsing || store.bookings.contains(where: { !$0.isCancelled && $0.attendance == .checkedOut }) {
+                            if browsingMode || store.bookings.contains(where: { !$0.isCancelled && $0.attendance == .checkedOut }) {
                                 reviewBanner.padding(.top, 10)
                             }
                         }.padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 56)
@@ -286,12 +288,15 @@ struct HomeView: View {
         .onChange(of: tab) { value in
             if value == .home { Task { await refreshHome() } }
         }
+        .onChange(of: session.userID) { _ in
+            Task { await refreshHome() }
+        }
         .task {
             do { recommendations = Array(try await APIService.shared.getPrograms(after: nil).programs.prefix(6)) }
             catch { recommendationError = "추천 운동 다시 찾아보기" }
         }
         .onChange(of: profile.hasMedicalTestData) { registered in
-            store.setMedicalRegistration(!isBrowsing && registered)
+            store.setMedicalRegistration(!browsingMode && registered)
         }
         .confirmationDialog("테스트 의료 데이터를 등록할까요?", isPresented: $confirmMedicalTest, titleVisibility: .visible) {
             Button("테스트 데이터 등록") {
@@ -385,11 +390,11 @@ struct HomeView: View {
     private var monthlyProgress: some View {
         VStack(spacing: 16) {
             HStack {
-                Text(isBrowsing ? "나의 운동 기록" : "이번 달 운동").font(AppTypography.font(16, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(browsingMode ? "나의 운동 기록" : "이번 달 운동").font(AppTypography.font(16, weight: .bold)).foregroundStyle(Theme.ink)
                 Spacer()
-                if !isBrowsing { Text("\(monthlyCount)회 참여").font(AppTypography.font(10)).foregroundStyle(secondary) }
+                if !browsingMode { Text("\(monthlyCount)회 참여").font(AppTypography.font(10)).foregroundStyle(secondary) }
             }
-            if isBrowsing {
+            if browsingMode {
                 Text("참여한 운동을 한눈에 확인하고 기록할 수 있어요.")
                     .font(AppTypography.font(11)).foregroundStyle(secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -404,7 +409,7 @@ struct HomeView: View {
             }
             .accessibilityElement(children: .ignore).accessibilityLabel("이번 달 운동 목표 4회 중 \(monthlyCount)회 참여")
             NavigationLink { MyExerciseView(store: store, profile: profile) } label: {
-                Text(isBrowsing ? "기능 알아보기" : "나의 운동").font(AppTypography.font(12, weight: .medium))
+                Text(browsingMode ? "기능 알아보기" : "나의 운동").font(AppTypography.font(12, weight: .medium))
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .foregroundStyle(.white).background(Theme.accent, in: Capsule())
             }
@@ -453,7 +458,7 @@ struct HomeView: View {
     private var reviewBanner: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(isBrowsing ? "운동 후 경험도 기록할 수 있어요" : "지난 운동은 어떠셨나요?").font(AppTypography.font(16, weight: .bold))
+                Text(browsingMode ? "운동 후 경험도 기록할 수 있어요" : "지난 운동은 어떠셨나요?").font(AppTypography.font(16, weight: .bold))
                 Text("남겨주신 경험을 바탕으로\n다음 운동을 찾아볼게요.")
                     .font(AppTypography.font(11)).foregroundStyle(secondary)
                 NavigationLink { MyReviewsView(store: store).toolbar(.visible, for: .navigationBar) } label: {
@@ -497,7 +502,7 @@ struct HomeView: View {
                     .accessibilityLabel("다음 주").frame(minWidth: 24, minHeight: 44)
             }
             let daily = reservations(on: selectedDate)
-            if let scheduleError, !isBrowsing {
+            if let scheduleError, !browsingMode {
                 Text(scheduleError).font(.footnote).foregroundStyle(.secondary)
                 Button("다시 시도") { Task { await refreshHome() } }
             }

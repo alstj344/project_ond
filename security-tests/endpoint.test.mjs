@@ -40,7 +40,7 @@ reject("https://api.example.com", path: "/api/%2e%2e/admin")
 reject("http://evil.example.com", fallback: "http://localhost:3000")
 print("Endpoint checks passed")
 `);
-    const result = spawnSync('xcrun', ['swift', file], {
+    const result = spawnSync('xcrun', ['swift', '-module-cache-path', join(directory, 'cache'), file], {
       encoding: 'utf8', timeout: 120000,
       env: { ...process.env, DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer' }
     });

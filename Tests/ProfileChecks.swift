@@ -9,6 +9,26 @@ final class Auth {
     var currentUser: User? = User(uid: "test-a", email: "a@example.invalid")
 }
 enum APIError: Error { case notLoggedIn, invalidResponse, serverUnavailable }
+struct ExerciseConditionsPayload: Decodable {
+    var preferredExercises: [String]?
+    var availableTimes: [String]?
+    var availableDays: [String]?
+    static let timeCodes: [String: String] = [:]
+    static let dayCodes: [String: String] = [:]
+    static let typeCodes: [String: String] = [:]
+    static func decodeResponse(_ data: Data) throws -> Self {
+        struct Response: Decodable { let user: ExerciseConditionsPayload }
+        return try JSONDecoder().decode(Response.self, from: data).user
+    }
+}
+final class APIService {
+    static let shared = APIService()
+    func getMyProfile() async throws -> Data { throw APIError.serverUnavailable }
+    func registerMedicalTestData() async throws { throw APIError.serverUnavailable }
+    func savePersonalDetails(name: String, phone: String) async throws {
+        throw APIError.serverUnavailable
+    }
+}
 
 let suite = "CalmProfileChecks-" + UUID().uuidString
 let defaults = UserDefaults(suiteName: suite)!

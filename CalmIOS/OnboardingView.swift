@@ -627,7 +627,10 @@ private struct AnalysisView: View {
         defer { saving = false }
         let uid = Auth.auth().currentUser?.uid
         do {
-            try await APIService.shared.saveOnboarding(profile)
+            // 프로필 API 저장은 재시도 가능한 동기화 작업입니다. 서버가 잠시
+            // 응답하지 않아도 Firebase 인증 세션과 현재 입력을 잃지 않고 홈으로
+            // 진행할 수 있어야 합니다.
+            _ = try? await APIService.shared.saveOnboarding(profile)
             try Task.checkCancellation()
             guard uid != nil, uid == Auth.auth().currentUser?.uid else { throw APIError.notLoggedIn }
             onboardingCompleted = true

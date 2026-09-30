@@ -338,7 +338,9 @@ struct AuthView: View {
                 let result = try await Auth.auth().createUser(withEmail: address, password: password)
                 createdAccount = true
                 stage = "Firestore profile"
-                try await FirebaseSession.ensureUserDocument(result.user)
+                // Firebase Auth 계정 생성이 성공한 뒤 프로필 문서 동기화가 일시적으로
+                // 실패해도 가입 자체를 실패로 처리하지 않습니다.
+                try? await FirebaseSession.ensureUserDocument(result.user)
                 showAgreement = true
             } else {
                 let result = try await Auth.auth().signIn(withEmail: address, password: password)
@@ -346,12 +348,14 @@ struct AuthView: View {
                 print("[Login] Firebase Auth succeeded")
                 #endif
                 stage = "Firestore profile"
-                try await FirebaseSession.ensureUserDocument(result.user)
+                try? await FirebaseSession.ensureUserDocument(result.user)
                 #if DEBUG
                 print("[Login] Firestore profile succeeded")
                 #endif
                 stage = "Express profile"
-                _ = try await APIService.shared.getMyProfile()
+                // 인증은 Firebase 세션으로 완료됩니다. Express 프로필 서버가
+                // 일시적으로 연결되지 않아도 로그인 화면에 머물지 않도록 합니다.
+                _ = try? await APIService.shared.getMyProfile()
                 #if DEBUG
                 print("[Login] Express profile succeeded")
                 #endif

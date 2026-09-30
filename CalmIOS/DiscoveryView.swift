@@ -560,9 +560,10 @@ private struct ProgramDiscoveryView: View {
                 preferences = nil
                 conditions = nil
                 if Auth.auth().currentUser != nil {
-                    let data = try await APIService.shared.getMyProfile()
-                    preferences = try OnboardingPreferences.decodeResponse(data)
-                    conditions = try ExerciseConditionsPayload.decodeResponse(data)
+                    if let data = try? await APIService.shared.getMyProfile() {
+                        preferences = try? OnboardingPreferences.decodeResponse(data)
+                        conditions = try? ExerciseConditionsPayload.decodeResponse(data)
+                    }
                 }
             }
             let page = try await APIService.shared.getPrograms(after: reset ? nil : nextCursor)
@@ -581,18 +582,10 @@ private struct ProgramDiscoveryView: View {
     @MainActor private func loadReviewCounts(for programs: [RemoteProgram]) async {
         let pending = programs.filter { $0.reviewCount == nil && reviewCounts[$0.id] == nil }
         guard !pending.isEmpty else { return }
-        let counts = await withTaskGroup(of: (String, Int)?.self, returning: [String: Int].self) { group in
-            for program in pending {
-                group.addTask {
-                    guard let response = try? await APIService.shared.getProgramReviews(programId: program.programId) else { return nil }
-                    return (program.id, response.reviewCount)
-                }
-            }
-            var values: [String: Int] = [:]
-            for await result in group {
-                if let (id, count) = result { values[id] = count }
-            }
-            return values
+        guard let response = try? await APIService.shared.getProgramReviewCounts() else { return }
+        var counts: [String: Int] = [:]
+        for program in pending {
+            counts[program.id] = response.counts[program.programId] ?? 0
         }
         reviewCounts.merge(counts) { _, latest in latest }
     }
@@ -665,7 +658,8 @@ struct DiscoveryProgramCard: View {
 
                     if let reviewCount {
                         HStack(spacing: 4) {
-                            Image(systemName: "bubble.left.fill")
+                            SafeAssetImage(name: "ReviewIcon", fallback: "bubble.left.fill")
+                                .frame(width: 13, height: 13)
                             Text("\(reviewCount)")
                         }
                         .font(AppTypography.font(10))
